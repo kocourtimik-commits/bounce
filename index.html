@@ -21,26 +21,38 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 4px;
+    padding: 10px 4px;
     font-size: 13px;
     letter-spacing: 0.5px;
+    min-height: 46px;
   }
-  .dots { display: flex; gap: 10px; }
+  .dots { display: flex; gap: 6px; }
   .dot {
-    width: 26px;
-    height: 26px;
+    width: 24px;
+    height: 24px;
     border: 2px solid #f5f4f0;
     background: transparent;
     color: #f5f4f0;
     font-family: inherit;
     font-weight: bold;
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
-    transition: transform 0.15s ease, background 0.15s ease;
+    transition: transform 0.12s ease, background 0.12s ease;
   }
   .dot:hover { transform: translateY(-2px); }
   .dot.active { background: #f5f4f0; color: #171717; }
-  .dot.done { opacity: 0.55; }
+  .dot.done { opacity: 0.5; }
+  .menu-btn {
+    border: 2px solid #f5f4f0;
+    background: transparent;
+    color: #f5f4f0;
+    font-family: inherit;
+    font-weight: bold;
+    font-size: 11px;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+  .menu-btn:hover { background: #f5f4f0; color: #171717; }
   canvas {
     background: #f5f4f0;
     display: block;
@@ -50,25 +62,29 @@
     width: 880px;
     display: flex;
     justify-content: space-between;
-    padding: 12px 4px;
+    padding: 10px 4px;
     font-size: 12px;
     opacity: 0.75;
+    min-height: 36px;
   }
 </style>
 </head>
 <body>
 
-<div class="bar">
-  <div id="lvlName" style="font-weight:bold;">01 // PRŮLEZ</div>
+<div class="bar" id="topBar">
+  <div style="display:flex; align-items:center; gap:12px;">
+    <button class="menu-btn" id="btnToMenu" style="display:none;">MENU</button>
+    <span id="lvlName" style="font-weight:bold;">BOUNCE BACK</span>
+  </div>
   <div class="dots" id="dots"></div>
-  <div id="hint">Rozběhni se a zmáčkni [E]</div>
+  <div id="hint"></div>
 </div>
 
 <canvas id="c" width="880" height="460"></canvas>
 
-<div class="controls">
+<div class="controls" id="bottomBar">
   <div>[A / D] pohyb  ·  [W / MEZERNÍK] skok  ·  [E] rozpad / složit  ·  [Q / KLIK] kotva</div>
-  <div>[R] restart</div>
+  <div>[R] restart  ·  [ESC] menu</div>
 </div>
 
 <script>
@@ -77,6 +93,7 @@ const ctx = canvas.getContext('2d');
 const lvlNameEl = document.getElementById('lvlName');
 const hintEl = document.getElementById('hint');
 const dotsEl = document.getElementById('dots');
+const btnToMenu = document.getElementById('btnToMenu');
 
 const INK = '#171717';
 const PAPER = '#f5f4f0';
@@ -96,7 +113,7 @@ function beep(f1, f2, dur = 0.12, vol = 0.05) {
   o.start(); o.stop(actx.currentTime + dur);
 }
 
-// 7 kostek panáčka (max výška kostky je 14px, takže bezpečně projdou každým průlezem)
+// 7 kostek tvořících postavu panáčka
 const PARTS = [
   { ox: 0,   oy: -18, w: 16, h: 14, head: true },
   { ox: 0,   oy: -3,  w: 16, h: 12 },
@@ -107,11 +124,30 @@ const PARTS = [
   { ox: 5,   oy: 21,  w: 8,  h: 13, limb: 'legR' }
 ];
 
-// 5 plně hratelných, dobře vyvážených úrovní
+// TUTORIAL ÚROVEŇ
+const TUTORIAL_LEVEL = {
+  name: 'TUTORIAL',
+  hint: 'Postupuj podle pokynů na obrazovce',
+  isTutorial: true,
+  spawn: { x: 80, y: 334 },
+  goal: { x: 780, y: 320, w: 46, h: 70 },
+  walls: [
+    { x: 0, y: 390, w: 880, h: 70 },
+    { x: 0, y: 0, w: 880, h: 16 },
+    { x: 0, y: 0, w: 16, h: 460 },
+    { x: 864, y: 0, w: 16, h: 460 },
+    { x: 520, y: 16, w: 32, h: 334 }
+  ],
+  buttons: [{ id: 99, x: 260, y: 378, w: 74, h: 12, pressed: false }],
+  doors: [{ id: 99, x: 660, y: 230, w: 22, h: 160, openY: 70, currY: 230 }],
+  hazards: []
+};
+
+// 10 LEHKÝCH, PLYNULÝCH ÚROVNÍ
 const LEVELS = [
   {
     name: '01 // PRŮLEZ',
-    hint: 'Rozběhni se [D], zmáčkni [E] a proklouzni pod zdí',
+    hint: 'Rozběhni se [D] a zmáčkni [E] pro podklouznutí',
     spawn: { x: 90, y: 334 },
     goal: { x: 770, y: 320, w: 46, h: 70 },
     walls: [
@@ -119,13 +155,13 @@ const LEVELS = [
       { x: 0, y: 0, w: 880, h: 16 },
       { x: 0, y: 0, w: 16, h: 460 },
       { x: 864, y: 0, w: 16, h: 460 },
-      { x: 420, y: 16, w: 34, h: 336 } // Mezera 38px dole – projde naprosto hladce
+      { x: 420, y: 16, w: 32, h: 334 }
     ],
     buttons: [], doors: [], hazards: []
   },
   {
     name: '02 // SPÍNAČ',
-    hint: 'Rozpadni se nad tlačítkem [E], jedna kostka otevře bránu',
+    hint: 'Rozpadni se na tlačítku [E], jedna kostka otevře bránu',
     spawn: { x: 90, y: 334 },
     goal: { x: 770, y: 320, w: 46, h: 70 },
     walls: [
@@ -135,61 +171,152 @@ const LEVELS = [
       { x: 864, y: 0, w: 16, h: 460 },
       { x: 520, y: 16, w: 24, h: 214 }
     ],
-    buttons: [{ id: 1, x: 280, y: 378, w: 74, h: 12, pressed: false }],
+    buttons: [{ id: 1, x: 280, y: 378, w: 76, h: 12, pressed: false }],
     doors: [{ id: 1, x: 520, y: 230, w: 24, h: 160, openY: 70, currY: 230 }],
     hazards: []
   },
   {
-    name: '03 // PROPAST',
-    hint: 'Rozběhni se, skoč [MEZERNÍK], ve vzduchu [E] a na druhé straně [E]',
-    spawn: { x: 110, y: 334 },
+    name: '03 // ŠIROKÁ PROPAST',
+    hint: 'V celku to nedoskočíš! Skoč [MEZERNÍK] a ve vzduchu [E]',
+    spawn: { x: 100, y: 334 },
     goal: { x: 770, y: 320, w: 46, h: 70 },
     walls: [
-      { x: 0, y: 390, w: 360, h: 70 },
-      { x: 500, y: 390, w: 380, h: 70 }, // Propast má jen 140px, takže ji kostky hravě přeletí
+      { x: 0, y: 390, w: 325, h: 70 },
+      { x: 555, y: 390, w: 325, h: 70 }, // 230px propast – nepřeskočitelná v celku, snadná v rozpadu
       { x: 0, y: 0, w: 880, h: 16 },
       { x: 0, y: 0, w: 16, h: 460 },
       { x: 864, y: 0, w: 16, h: 460 }
     ],
     buttons: [], doors: [],
-    hazards: [{ x: 360, y: 442, w: 140, h: 18 }]
+    hazards: [{ x: 325, y: 442, w: 230, h: 18 }]
   },
   {
-    name: '04 // PATRO',
-    hint: 'Vyskoč na plošinu, rozbij se [E] a přední kostkou se slož u cíle',
-    spawn: { x: 90, y: 334 },
-    goal: { x: 770, y: 150, w: 46, h: 70 },
+    name: '04 // DVA PRŮLEZY',
+    hint: 'Podjeď první zeď [E], slož se a podjeď druhou',
+    spawn: { x: 70, y: 334 },
+    goal: { x: 790, y: 320, w: 46, h: 70 },
     walls: [
       { x: 0, y: 390, w: 880, h: 70 },
       { x: 0, y: 0, w: 880, h: 16 },
       { x: 0, y: 0, w: 16, h: 460 },
       { x: 864, y: 0, w: 16, h: 460 },
-      { x: 220, y: 300, w: 190, h: 18 },
-      { x: 470, y: 220, w: 394, h: 18 }
+      { x: 280, y: 16, w: 28, h: 334 },
+      { x: 560, y: 16, w: 28, h: 334 }
     ],
-    buttons: [{ id: 2, x: 310, y: 288, w: 70, h: 12, pressed: false }],
-    doors: [{ id: 2, x: 640, y: 80, w: 24, h: 140, openY: -60, currY: 80 }],
-    hazards: []
+    buttons: [], doors: [], hazards: []
   },
   {
-    name: '05 // VÝSTUP',
-    hint: 'Složení [E] tě nadhodí – vyběhni po patrech až k cíli',
+    name: '05 // SCHOD',
+    hint: 'Vyskoč na plošinu, rozpadni se [E] a slož se nahoře',
     spawn: { x: 90, y: 334 },
-    goal: { x: 770, y: 70, w: 46, h: 70 },
+    goal: { x: 770, y: 170, w: 46, h: 70 },
     walls: [
       { x: 0, y: 390, w: 880, h: 70 },
       { x: 0, y: 0, w: 880, h: 16 },
       { x: 0, y: 0, w: 16, h: 460 },
       { x: 864, y: 0, w: 16, h: 460 },
-      { x: 250, y: 300, w: 220, h: 18 },
-      { x: 90, y: 210, w: 210, h: 18 },
-      { x: 360, y: 140, w: 504, h: 18 }
+      { x: 220, y: 310, w: 180, h: 18 },
+      { x: 460, y: 240, w: 404, h: 18 },
+      { x: 610, y: 16, w: 26, h: 184 }
     ],
-    buttons: [{ id: 3, x: 160, y: 198, w: 68, h: 12, pressed: false }],
-    doors: [{ id: 3, x: 650, y: 16, w: 24, h: 124, openY: -108, currY: 16 }],
+    buttons: [], doors: [], hazards: []
+  },
+  {
+    name: '06 // ZÁMEK NA ŘÍMSE',
+    hint: 'Kostka na horní římse otevře dveře dole',
+    spawn: { x: 90, y: 334 },
+    goal: { x: 770, y: 320, w: 46, h: 70 },
+    walls: [
+      { x: 0, y: 390, w: 880, h: 70 },
+      { x: 0, y: 0, w: 880, h: 16 },
+      { x: 0, y: 0, w: 16, h: 460 },
+      { x: 864, y: 0, w: 16, h: 460 },
+      { x: 210, y: 300, w: 220, h: 18 },
+      { x: 580, y: 16, w: 24, h: 214 }
+    ],
+    buttons: [{ id: 6, x: 340, y: 288, w: 76, h: 12, pressed: false }],
+    doors: [{ id: 6, x: 580, y: 230, w: 24, h: 160, openY: 70, currY: 230 }],
     hazards: []
+  },
+  {
+    name: '07 // SKOK A PRŮLET',
+    hint: 'Přeskoč ostny a hned za nimi se rozpadni pod stěnou',
+    spawn: { x: 70, y: 334 },
+    goal: { x: 790, y: 320, w: 46, h: 70 },
+    walls: [
+      { x: 0, y: 390, w: 880, h: 70 },
+      { x: 0, y: 0, w: 880, h: 16 },
+      { x: 0, y: 0, w: 16, h: 460 },
+      { x: 864, y: 0, w: 16, h: 460 },
+      { x: 540, y: 16, w: 30, h: 334 }
+    ],
+    buttons: [], doors: [],
+    hazards: [{ x: 260, y: 374, w: 84, h: 16 }]
+  },
+  {
+    name: '08 // BOUNCE VÝSKOK',
+    hint: 'Složení [E] tě vždy nadhodí vzhůru – využij to',
+    spawn: { x: 90, y: 334 },
+    goal: { x: 770, y: 110, w: 46, h: 70 },
+    walls: [
+      { x: 0, y: 390, w: 880, h: 70 },
+      { x: 0, y: 0, w: 880, h: 16 },
+      { x: 0, y: 0, w: 16, h: 460 },
+      { x: 864, y: 0, w: 16, h: 460 },
+      { x: 250, y: 295, w: 190, h: 18 },
+      { x: 490, y: 220, w: 170, h: 18 },
+      { x: 690, y: 180, w: 174, h: 18 }
+    ],
+    buttons: [], doors: [], hazards: []
+  },
+  {
+    name: '09 // DVOJITÁ BRÁNA',
+    hint: 'Stačí jedna kostka na každém tlačítku',
+    spawn: { x: 70, y: 334 },
+    goal: { x: 790, y: 320, w: 46, h: 70 },
+    walls: [
+      { x: 0, y: 390, w: 880, h: 70 },
+      { x: 0, y: 0, w: 880, h: 16 },
+      { x: 0, y: 0, w: 16, h: 460 },
+      { x: 864, y: 0, w: 16, h: 460 },
+      { x: 460, y: 16, w: 22, h: 214 },
+      { x: 640, y: 16, w: 22, h: 214 }
+    ],
+    buttons: [
+      { id: 91, x: 210, y: 378, w: 72, h: 12, pressed: false },
+      { id: 92, x: 320, y: 378, w: 72, h: 12, pressed: false }
+    ],
+    doors: [
+      { id: 91, x: 460, y: 230, w: 22, h: 160, openY: 70, currY: 230 },
+      { id: 92, x: 640, y: 230, w: 22, h: 160, openY: 70, currY: 230 }
+    ],
+    hazards: []
+  },
+  {
+    name: '10 // FINÁLE',
+    hint: 'Spoj všechny schopnosti: propast, spínač i průlez',
+    spawn: { x: 70, y: 334 },
+    goal: { x: 790, y: 130, w: 46, h: 70 },
+    walls: [
+      { x: 0, y: 390, w: 290, h: 70 },
+      { x: 480, y: 390, w: 400, h: 70 },
+      { x: 0, y: 0, w: 880, h: 16 },
+      { x: 0, y: 0, w: 16, h: 460 },
+      { x: 864, y: 0, w: 16, h: 460 },
+      { x: 540, y: 295, w: 150, h: 18 },
+      { x: 710, y: 200, w: 154, h: 18 }
+    ],
+    buttons: [{ id: 10, x: 580, y: 378, w: 74, h: 12, pressed: false }],
+    doors: [{ id: 10, x: 710, y: 60, w: 22, h: 140, openY: -80, currY: 60 }],
+    hazards: [{ x: 290, y: 442, w: 190, h: 18 }]
   }
 ];
+
+// STAV APLIKACE: 'MENU' | 'CONTROLS' | 'TUTORIAL' | 'GAME'
+let screen = 'MENU';
+let menuIndex = 0;
+const MENU_ITEMS = ['PLAY', 'CONTROLS', 'TUTORIAL'];
+let menuButtonsRects = [];
 
 let lvlIdx = 0;
 let done = new Set();
@@ -216,6 +343,57 @@ let pieces = [];
 let anchorIdx = 0;
 let dust = [];
 let keys = {};
+let animFrame = 0;
+
+function openMenu() {
+  screen = 'MENU';
+  btnToMenu.style.display = 'none';
+  dotsEl.innerHTML = '';
+  lvlNameEl.textContent = 'BOUNCE BACK';
+  hintEl.textContent = 'Vyber možnost v menu';
+}
+
+function openControls() {
+  screen = 'CONTROLS';
+  btnToMenu.style.display = 'inline-block';
+  dotsEl.innerHTML = '';
+  lvlNameEl.textContent = 'CONTROLS';
+  hintEl.textContent = '[ESC] nebo klik pro návrat';
+}
+
+function startTutorial() {
+  screen = 'TUTORIAL';
+  btnToMenu.style.display = 'inline-block';
+  dotsEl.innerHTML = '';
+  lvl = JSON.parse(JSON.stringify(TUTORIAL_LEVEL));
+  resetPlayerToSpawn();
+  lvlNameEl.textContent = lvl.name;
+  hintEl.textContent = lvl.hint;
+}
+
+function loadLevel(i) {
+  screen = 'GAME';
+  btnToMenu.style.display = 'inline-block';
+  lvlIdx = i;
+  lvl = JSON.parse(JSON.stringify(LEVELS[i]));
+  resetPlayerToSpawn();
+  lvlNameEl.textContent = lvl.name;
+  hintEl.textContent = lvl.hint;
+  renderDots();
+}
+
+function resetPlayerToSpawn() {
+  Object.assign(player, {
+    x: lvl.spawn.x, y: lvl.spawn.y,
+    vx: 0, vy: 0,
+    grounded: false, coyote: 0,
+    state: 'ASSEMBLED',
+    scaleX: 1, scaleY: 1
+  });
+  pieces = [];
+  dust = [];
+  anchorIdx = 0;
+}
 
 function renderDots() {
   dotsEl.innerHTML = '';
@@ -228,23 +406,7 @@ function renderDots() {
   });
 }
 
-function loadLevel(i) {
-  lvlIdx = i;
-  lvl = JSON.parse(JSON.stringify(LEVELS[i]));
-  Object.assign(player, {
-    x: lvl.spawn.x, y: lvl.spawn.y,
-    vx: 0, vy: 0,
-    grounded: false, coyote: 0,
-    state: 'ASSEMBLED',
-    scaleX: 1, scaleY: 1
-  });
-  pieces = [];
-  dust = [];
-  anchorIdx = 0;
-  lvlNameEl.textContent = lvl.name;
-  hintEl.textContent = lvl.hint;
-  renderDots();
-}
+btnToMenu.onclick = openMenu;
 
 function solids() {
   const s = [...lvl.walls];
@@ -271,8 +433,7 @@ function shatter() {
 
   const cx = player.x + player.w / 2;
   const cy = player.y + player.h / 2;
-  // Silný setrvačný impuls, aby kostky krásně klouzaly i létaly přes překážky
-  const boostVx = player.vx * 1.45 + (Math.abs(player.vx) > 0.5 ? player.facing * 1.5 : 0);
+  const boostVx = player.vx * 1.48 + (Math.abs(player.vx) > 0.5 ? player.facing * 1.6 : 0);
 
   pieces = PARTS.map(p => ({
     x: cx + p.ox - p.w / 2,
@@ -280,8 +441,8 @@ function shatter() {
     w: p.w, h: p.h,
     ox: p.ox, oy: p.oy,
     head: !!p.head,
-    vx: boostVx + p.ox * 0.16 + (Math.random() - 0.5) * 1.0,
-    vy: player.vy * 0.9 + p.oy * 0.05 - 1.2,
+    vx: boostVx + p.ox * 0.16 + (Math.random() - 0.5) * 0.9,
+    vy: player.vy * 0.92 + p.oy * 0.05 - 1.3,
     rot: 0,
     vrot: (Math.random() - 0.5) * 0.1
   }));
@@ -303,7 +464,6 @@ function reassemble() {
   let tx = acx - a.ox - player.w / 2;
   let ty = acy - a.oy - player.h / 2 - 2;
 
-  // Bezpečné vystrčení ze zdí i podlahy při složení
   const sol = solids();
   for (let iter = 0; iter < 3; iter++) {
     for (let s of sol) {
@@ -330,8 +490,43 @@ function reassemble() {
   addDust(acx, acy, 10);
 }
 
+function activateMenuSelection(idx) {
+  beep(360, 520, 0.1);
+  if (idx === 0) loadLevel(0);
+  else if (idx === 1) openControls();
+  else if (idx === 2) startTutorial();
+}
+
 window.addEventListener('keydown', e => {
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
+
+  if (e.code === 'Escape') {
+    if (screen !== 'MENU') openMenu();
+    return;
+  }
+
+  if (screen === 'MENU') {
+    if (!keys[e.code]) {
+      if (e.code === 'ArrowUp' || e.code === 'KeyW') {
+        menuIndex = (menuIndex + MENU_ITEMS.length - 1) % MENU_ITEMS.length;
+        beep(300, 360, 0.05, 0.03);
+      } else if (e.code === 'ArrowDown' || e.code === 'KeyS') {
+        menuIndex = (menuIndex + 1) % MENU_ITEMS.length;
+        beep(300, 360, 0.05, 0.03);
+      } else if (e.code === 'Enter' || e.code === 'Space') {
+        activateMenuSelection(menuIndex);
+      }
+    }
+    keys[e.code] = true;
+    return;
+  }
+
+  if (screen === 'CONTROLS') {
+    if (!keys[e.code] && (e.code === 'Enter' || e.code === 'Space')) openMenu();
+    keys[e.code] = true;
+    return;
+  }
+
   if (!keys[e.code]) {
     if (e.code === 'KeyE') {
       if (player.state === 'ASSEMBLED') shatter();
@@ -341,17 +536,47 @@ window.addEventListener('keydown', e => {
       anchorIdx = (anchorIdx + 1) % pieces.length;
       beep(440, 520, 0.06, 0.04);
     }
-    if (e.code === 'KeyR') loadLevel(lvlIdx);
+    if (e.code === 'KeyR') {
+      if (screen === 'TUTORIAL') startTutorial();
+      else loadLevel(lvlIdx);
+    }
   }
   keys[e.code] = true;
 });
 window.addEventListener('keyup', e => keys[e.code] = false);
 
-canvas.addEventListener('mousedown', e => {
-  if (player.state !== 'SHATTERED') return;
+canvas.addEventListener('mousemove', e => {
+  if (screen !== 'MENU') return;
   const r = canvas.getBoundingClientRect();
   const mx = e.clientX - r.left;
   const my = e.clientY - r.top;
+  menuButtonsRects.forEach((b, i) => {
+    if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
+      menuIndex = i;
+    }
+  });
+});
+
+canvas.addEventListener('mousedown', e => {
+  const r = canvas.getBoundingClientRect();
+  const mx = e.clientX - r.left;
+  const my = e.clientY - r.top;
+
+  if (screen === 'MENU') {
+    menuButtonsRects.forEach((b, i) => {
+      if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
+        activateMenuSelection(i);
+      }
+    });
+    return;
+  }
+
+  if (screen === 'CONTROLS') {
+    openMenu();
+    return;
+  }
+
+  if (player.state !== 'SHATTERED') return;
   let best = -1, minD = 50;
   pieces.forEach((p, i) => {
     const d = Math.hypot(p.x + p.w / 2 - mx, p.y + p.h / 2 - my);
@@ -363,10 +588,9 @@ canvas.addEventListener('mousedown', e => {
   }
 });
 
-function update() {
+function updateGame() {
   const sol = solids();
 
-  // Tlačítka (stačí, když se ho dotkne jedna kostka)
   lvl.buttons.forEach(b => {
     let active = false;
     if (player.state === 'ASSEMBLED' && hit(player, b)) active = true;
@@ -377,10 +601,10 @@ function update() {
     b.pressed = active;
   });
 
-  // Dveře
   lvl.doors.forEach(d => {
+    const sourceDoors = lvl.isTutorial ? TUTORIAL_LEVEL.doors : LEVELS[lvlIdx].doors;
     const b = lvl.buttons.find(btn => btn.id === d.id);
-    const target = (b && b.pressed) ? d.openY : LEVELS[lvlIdx].doors.find(od => od.id === d.id).y;
+    const target = (b && b.pressed) ? d.openY : sourceDoors.find(od => od.id === d.id).y;
     d.currY += (target - d.currY) * 0.14;
   });
 
@@ -448,15 +672,20 @@ function update() {
     for (let h of lvl.hazards) {
       if (hit(player, h)) {
         beep(150, 60, 0.2);
-        loadLevel(lvlIdx);
+        if (screen === 'TUTORIAL') startTutorial();
+        else loadLevel(lvlIdx);
         return;
       }
     }
 
     if (hit(player, lvl.goal)) {
-      done.add(lvlIdx);
       beep(440, 660, 0.14);
-      loadLevel((lvlIdx + 1) % LEVELS.length);
+      if (screen === 'TUTORIAL') {
+        loadLevel(0);
+      } else {
+        done.add(lvlIdx);
+        loadLevel((lvlIdx + 1) % LEVELS.length);
+      }
       return;
     }
   }
@@ -477,7 +706,7 @@ function update() {
           if (p.vy > 0) {
             p.y = s.y - p.h;
             p.vy = -p.vy * 0.22;
-            p.vx *= 0.91; // Nízké tření – kostky pěkně dokloužou skrz průlez
+            p.vx *= 0.91;
             p.vrot *= 0.6;
             if (Math.abs(p.vy) < 0.5) p.vy = 0;
           } else if (p.vy < 0) {
@@ -488,8 +717,6 @@ function update() {
       }
       p.rot += p.vrot;
     });
-
-    // Automaticky udržuje jako kotvu nejvíce přední kostku, dokud hráč neklikne/nezmáčkne Q
   }
   else if (player.state === 'REASSEMBLING') {
     player.timer += 0.09;
@@ -507,7 +734,7 @@ function update() {
     if (t >= 1) {
       player.x = player.tx;
       player.y = player.ty;
-      player.vy = -6.8; // Pěkný Bounce Back odraz nahoru
+      player.vy = -6.8;
       player.vx = 0;
       player.scaleX = 0.84;
       player.scaleY = 1.2;
@@ -528,9 +755,146 @@ function drawEyes(facing) {
   ctx.fillRect(2 + ex, -2, 2.5, 4);
 }
 
-function draw() {
+function drawPlayerSprite(cx, cy, walk, scaleX, scaleY, facing) {
+  const swing = Math.sin(walk) * 3.5;
+  ctx.save();
+  ctx.translate(cx, cy + 27);
+  ctx.scale(scaleX, scaleY);
+  ctx.translate(0, -27);
+
+  PARTS.forEach(p => {
+    let ay = 0;
+    if (p.limb === 'legL') ay = swing;
+    if (p.limb === 'legR') ay = -swing;
+    if (p.limb === 'armL') ay = -swing * 0.6;
+    if (p.limb === 'armR') ay = swing * 0.6;
+    if (p.head) ay = -Math.abs(swing) * 0.25;
+
+    ctx.save();
+    ctx.translate(p.ox, p.oy + ay);
+    ctx.fillStyle = INK;
+    ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+    if (p.head) drawEyes(facing);
+    ctx.restore();
+  });
+  ctx.restore();
+}
+
+function drawMenu() {
   ctx.fillStyle = PAPER;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Okrajový rám
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 4;
+  ctx.strokeRect(16, 16, canvas.width - 32, canvas.height - 32);
+
+  // Nadpis
+  ctx.fillStyle = INK;
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 46px ui-monospace, monospace';
+  ctx.fillText('BOUNCE BACK', canvas.width / 2, 112);
+
+  // Animovaný panáček z kostek uprostřed pod nadpisem
+  const bounce = Math.abs(Math.sin(animFrame * 0.05)) * 8;
+  drawPlayerSprite(canvas.width / 2, 165 - bounce, animFrame * 0.08, 1, 1, 1);
+
+  // Tlačítka menu
+  menuButtonsRects = [];
+  const btnW = 240;
+  const btnH = 44;
+  const startY = 235;
+  const gap = 58;
+
+  MENU_ITEMS.forEach((label, i) => {
+    const bx = canvas.width / 2 - btnW / 2;
+    const by = startY + i * gap;
+    menuButtonsRects.push({ x: bx, y: by, w: btnW, h: btnH });
+
+    const active = (i === menuIndex);
+    ctx.fillStyle = active ? INK : PAPER;
+    ctx.fillRect(bx, by, btnW, btnH);
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(bx, by, btnW, btnH);
+
+    ctx.fillStyle = active ? PAPER : INK;
+    ctx.font = 'bold 18px ui-monospace, monospace';
+    ctx.fillText(label, canvas.width / 2, by + 28);
+  });
+
+  ctx.textAlign = 'left';
+}
+
+function drawControlsScreen() {
+  ctx.fillStyle = PAPER;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 4;
+  ctx.strokeRect(16, 16, canvas.width - 32, canvas.height - 32);
+
+  ctx.fillStyle = INK;
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 34px ui-monospace, monospace';
+  ctx.fillText('CONTROLS', canvas.width / 2, 85);
+
+  const rows = [
+    ['[A] / [D]  nebo  [ŠIPKY]', 'Pohyb vlevo a vpravo'],
+    ['[W] / [SPACE] / [NAHORU]', 'Skok'],
+    ['[E]', 'Rozpad na kostky / Složení zpět (Bounce Back)'],
+    ['[Q]  nebo  [KLIK MYŠÍ]', 'Výběr kotevní kostky v rozpadu'],
+    ['[R]', 'Restart aktuálního levelu'],
+    ['[ESC]', 'Návrat do hlavního menu']
+  ];
+
+  ctx.font = 'bold 16px ui-monospace, monospace';
+  rows.forEach((r, idx) => {
+    const y = 145 + idx * 42;
+    ctx.textAlign = 'right';
+    ctx.fillText(r[0], canvas.width / 2 - 20, y);
+    ctx.textAlign = 'left';
+    ctx.font = '16px ui-monospace, monospace';
+    ctx.fillText('—  ' + r[1], canvas.width / 2 - 5, y);
+    ctx.font = 'bold 16px ui-monospace, monospace';
+  });
+
+  // Tlačítko zpět
+  const bx = canvas.width / 2 - 100;
+  const by = 395;
+  ctx.fillStyle = INK;
+  ctx.fillRect(bx, by, 200, 38);
+  ctx.fillStyle = PAPER;
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 15px ui-monospace, monospace';
+  ctx.fillText('ZPĚT DO MENU', canvas.width / 2, by + 24);
+  ctx.textAlign = 'left';
+}
+
+function drawTutorialHints() {
+  ctx.fillStyle = INK;
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 13px ui-monospace, monospace';
+
+  // Popisek 1: Tlačítko
+  ctx.fillText('1. ROZPADNI SE [E] NAD TLAČÍTKEM', 295, 290);
+  ctx.fillText('KOSTKA HO PODRŽÍ STISKNUTÉ', 295, 308);
+
+  // Popisek 2: Průlez + kotva
+  ctx.fillText('2. PROKLUZNI POD ZDÍ', 536, 260);
+  ctx.fillText('VYBER KOTVU [Q / KLIK] A SLOŽ SE [E]', 536, 278);
+
+  // Popisek 3: Cíl
+  ctx.fillText('3. DOJDI DO CÍLE', 790, 295);
+
+  ctx.textAlign = 'left';
+}
+
+function drawGame() {
+  ctx.fillStyle = PAPER;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (lvl.isTutorial) drawTutorialHints();
 
   // Cíl
   const g = lvl.goal;
@@ -579,32 +943,14 @@ function draw() {
 
   // Panáček
   if (player.state === 'ASSEMBLED') {
-    const cx = player.x + player.w / 2;
-    const cy = player.y + player.h / 2;
-    const swing = Math.sin(player.walk) * 3.5;
-
-    ctx.save();
-    ctx.translate(cx, cy + player.h / 2);
-    ctx.scale(player.scaleX, player.scaleY);
-    ctx.translate(0, -player.h / 2);
-
-    PARTS.forEach(p => {
-      let ay = 0;
-      if (p.limb === 'legL') ay = swing;
-      if (p.limb === 'legR') ay = -swing;
-      if (p.limb === 'armL') ay = -swing * 0.6;
-      if (p.limb === 'armR') ay = swing * 0.6;
-      if (p.head) ay = -Math.abs(swing) * 0.25;
-
-      ctx.save();
-      ctx.translate(p.ox, p.oy + ay);
-      ctx.fillStyle = INK;
-      ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
-      if (p.head) drawEyes(player.facing);
-      ctx.restore();
-    });
-
-    ctx.restore();
+    drawPlayerSprite(
+      player.x + player.w / 2,
+      player.y + player.h / 2,
+      player.walk,
+      player.scaleX,
+      player.scaleY,
+      player.facing
+    );
   } else {
     const a = pieces[anchorIdx];
     if (a) {
@@ -659,12 +1005,19 @@ function draw() {
 }
 
 function loop() {
-  update();
-  draw();
+  animFrame++;
+  if (screen === 'MENU') {
+    drawMenu();
+  } else if (screen === 'CONTROLS') {
+    drawControlsScreen();
+  } else {
+    updateGame();
+    drawGame();
+  }
   requestAnimationFrame(loop);
 }
 
-loadLevel(0);
+openMenu();
 loop();
 </script>
 </body>
