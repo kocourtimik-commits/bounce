@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<title>Bounce Back</title>
+<style>
+  * { box-sizing: border-box; user-select: none; margin: 0; padding: 0; }
+  body {
+    background: #171717;
+    color: #f5f4f0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+  .bar {
+    width: 880px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 4px;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+  }
+  .dots { display: flex; gap: 10px; }
+  .dot {
+    width: 26px;
+    height: 26px;
+    border: 2px solid #f5f4f0;
+    background: transparent;
+    color: #f5f4f0;
+    font-family: inherit;
+    font-weight: bold;
+    font-size: 12px;
+    cursor: pointer;
+    transition: transform 0.15s ease, background 0.15s ease;
+  }
+  .dot:hover { transform: translateY(-2px); }
+  .dot.active { background: #f5f4f0; color: #171717; }
+  .dot.done { opacity: 0.55; }
+  canvas {
+    background: #f5f4f0;
+    display: block;
+    cursor: pointer;
+  }
+  .controls {
+    width: 880px;
+    display: flex;
+    justify-content: space-between;
+    padding: 12px 4px;
+    font-size: 12px;
+    opacity: 0.75;
+  }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <div id="lvlName" style="font-weight:bold;">01 // PRŮLEZ</div>
+  <div class="dots" id="dots"></div>
+  <div id="hint">Rozběhni se a zmáčkni [E]</div>
+</div>
+
+<canvas id="c" width="880" height="460"></canvas>
+
+<div class="controls">
+  <div>[A / D] pohyb  ·  [W / MEZERNÍK] skok  ·  [E] rozpad / složit  ·  [Q / KLIK] kotva</div>
+  <div>[R] restart</div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const lvlNameEl = document.getElementById('lvlName');
+const hintEl = document.getElementById('hint');
+const dotsEl = document.getElementById('dots');
+
+const INK = '#171717';
+const PAPER = '#f5f4f0';
+
+let actx = null;
+function beep(f1, f2, dur = 0.12, vol = 0.05) {
+  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+  if (actx.state === 'suspended') actx.resume();
+  const o = actx.createOscillator();
+  const g = actx.createGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(f1, actx.currentTime);
+  if (f2) o.frequency.exponentialRampToValueAtTime(f2, actx.currentTime + dur);
+  g.gain.setValueAtTime(vol, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + dur);
+  o.connect(g); g.connect(actx.destination);
+  o.start(); o.stop(actx.currentTime + dur);
+}
+
+// 7 kostek panáčka (max výška kostky je 14px, takže bezpečně projdou každým průlezem)
+const PARTS = [
+  { ox: 0,   oy: -18, w: 16, h: 14, head: true },
+  { ox: 0,   oy: -3,  w: 16, h: 12 },
+  { ox: 0,   oy: 9,   w: 14, h: 10 },
+  { ox: -13, oy: -1,  w: 8,  h: 13, limb: 'armL' },
+  { ox: 13,  oy: -1,  w: 8,  h: 13, limb: 'armR' },
+  { ox: -5,  oy: 21,  w: 8,  h: 13, limb: 'legL' },
+  { ox: 5,   oy: 21,  w: 8,  h: 13, limb: 'legR' }
+];
+
+// 5 plně hratelných, dobře vyvážených úrovní
+const LEVELS = [
+  {
+    name: '01 // PRŮLEZ',
+    hint: 'Rozběhni se [D], zmáčkni [E] a proklouzni pod zdí',
+    spawn: { x: 90, y: 334 },
+    goal: { x: 770, y: 320, w: 46, h: 70 },
+    walls: [
+      { x: 0, y: 390, w: 880, h: 70 },
+      { x: 0, y: 0, w: 880, h: 16 },
+      { x: 0, y: 0, w: 16, h: 460 },
+      { x: 864, y: 0, w: 16, h: 460 },
+      { x: 420, y: 16, w: 34, h: 336 } // Mezera 38px dole – projde naprosto hladce
+    ],
+    buttons: [], doors: [], hazards: []
+  },
+  {
+    name: '02 // SPÍNAČ',
+    hint: 'Rozpadni se nad tlačítkem [E], jedna kostka otevře bránu',
+    spawn: { x: 90, y: 334 },
+    goal: { x: 770, y: 320, w: 46, h: 70 },
+    walls: [
+      { x: 0, y: 390, w: 880, h: 70 },
+      { x: 0, y: 0, w: 880, h: 16 },
+      { x: 0, y: 0, w: 16, h: 460 },
+      { x: 864, y: 0, w: 16, h: 460 },
+      { x: 520, y: 16, w: 24, h: 214 }
+    ],
+    buttons: [{ id: 1, x: 280, y: 378, w: 74, h: 12, pressed: false }],
+    doors: [{ id: 1, x: 520, y: 230, w: 24, h: 160, openY: 70, currY: 230 }],
+    hazards: []
+  },
+  {
+    name: '03 // PROPAST',
+    hint: 'Rozběhni se, skoč [MEZERNÍK], ve vzduchu [E] a na druhé straně [E]',
+    spawn: { x: 110, y: 334 },
+    goal: { x: 770, y: 320, w: 46, h: 70 },
+    walls: [
+      { x: 0, y: 390, w: 360, h: 70 },
+      { x: 500, y: 390, w: 380, h: 70 }, // Propast má jen 140px, takže ji kostky hravě přeletí
+      { x: 0, y: 0, w: 880, h: 16 },
+      { x: 0, y: 0, w: 16, h: 460 },
+      { x: 864, y: 0, w: 16, h: 460 }
+    ],
+    buttons: [], doors: [],
+    hazards: [{ x: 360, y: 442, w: 140, h: 18 }]
+  },
+  {
+    name: '04 // PATRO',
+    hint: 'Vyskoč na plošinu, rozbij se [E] a přední kostkou se slož u cíle',
+    spawn: { x: 90, y: 334 },
+    goal: { x: 770, y: 150, w: 46, h: 70 },
+    walls: [
+      { x: 0, y: 390, w: 880, h: 70 },
+      { x: 0, y: 0, w: 880, h: 16 },
+      { x: 0, y: 0, w: 16, h: 460 },
+      { x: 864, y: 0, w: 16, h: 460 },
+      { x: 220, y: 300, w: 190, h: 18 },
+      { x: 470, y: 220, w: 394, h: 18 }
+    ],
+    buttons: [{ id: 2, x: 310, y: 288, w: 70, h: 12, pressed: false }],
+    doors: [{ id: 2, x: 640, y: 80, w: 24, h: 140, openY: -60, currY: 80 }],
+    hazards: []
+  },
+  {
+    name: '05 // VÝSTUP',
+    hint: 'Složení [E] tě nadhodí – vyběhni po patrech až k cíli',
+    spawn: { x: 90, y: 334 },
+    goal: { x: 770, y: 70, w: 46, h: 70 },
+    walls: [
+      { x: 0, y: 390, w: 880, h: 70 },
+      { x: 0, y: 0, w: 880, h: 16 },
+      { x: 0, y: 0, w: 16, h: 460 },
+      { x: 864, y: 0, w: 16, h: 460 },
+      { x: 250, y: 300, w: 220, h: 18 },
+      { x: 90, y: 210, w: 210, h: 18 },
+      { x: 360, y: 140, w: 504, h: 18 }
+    ],
+    buttons: [{ id: 3, x: 160, y: 198, w: 68, h: 12, pressed: false }],
+    doors: [{ id: 3, x: 650, y: 16, w: 24, h: 124, openY: -108, currY: 16 }],
+    hazards: []
+  }
+];
+
+let lvlIdx = 0;
+let done = new Set();
+let lvl = null;
+
+const GRAVITY = 0.38;
+let player = {
+  x: 0, y: 0, w: 32, h: 54,
+  vx: 0, vy: 0,
+  speed: 5.0,
+  jump: -10.6,
+  grounded: false,
+  coyote: 0,
+  state: 'ASSEMBLED',
+  timer: 0,
+  tx: 0, ty: 0,
+  facing: 1,
+  walk: 0,
+  scaleX: 1,
+  scaleY: 1
+};
+
+let pieces = [];
+let anchorIdx = 0;
+let dust = [];
+let keys = {};
+
+function renderDots() {
+  dotsEl.innerHTML = '';
+  LEVELS.forEach((_, i) => {
+    const b = document.createElement('button');
+    b.className = 'dot' + (i === lvlIdx ? ' active' : '') + (done.has(i) ? ' done' : '');
+    b.textContent = i + 1;
+    b.onclick = () => loadLevel(i);
+    dotsEl.appendChild(b);
+  });
+}
+
+function loadLevel(i) {
+  lvlIdx = i;
+  lvl = JSON.parse(JSON.stringify(LEVELS[i]));
+  Object.assign(player, {
+    x: lvl.spawn.x, y: lvl.spawn.y,
+    vx: 0, vy: 0,
+    grounded: false, coyote: 0,
+    state: 'ASSEMBLED',
+    scaleX: 1, scaleY: 1
+  });
+  pieces = [];
+  dust = [];
+  anchorIdx = 0;
+  lvlNameEl.textContent = lvl.name;
+  hintEl.textContent = lvl.hint;
+  renderDots();
+}
+
+function solids() {
+  const s = [...lvl.walls];
+  lvl.doors.forEach(d => s.push({ x: d.x, y: d.currY, w: d.w, h: d.h }));
+  return s;
+}
+
+function hit(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function addDust(x, y, n = 6) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 0.8 + Math.random() * 2.2;
+    dust.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 0.5, life: 1, s: 3 + Math.random() * 2 });
+  }
+}
+
+function shatter() {
+  if (player.state !== 'ASSEMBLED') return;
+  player.state = 'SHATTERED';
+  beep(220, 90, 0.14);
+
+  const cx = player.x + player.w / 2;
+  const cy = player.y + player.h / 2;
+  // Silný setrvačný impuls, aby kostky krásně klouzaly i létaly přes překážky
+  const boostVx = player.vx * 1.45 + (Math.abs(player.vx) > 0.5 ? player.facing * 1.5 : 0);
+
+  pieces = PARTS.map(p => ({
+    x: cx + p.ox - p.w / 2,
+    y: cy + p.oy - p.h / 2,
+    w: p.w, h: p.h,
+    ox: p.ox, oy: p.oy,
+    head: !!p.head,
+    vx: boostVx + p.ox * 0.16 + (Math.random() - 0.5) * 1.0,
+    vy: player.vy * 0.9 + p.oy * 0.05 - 1.2,
+    rot: 0,
+    vrot: (Math.random() - 0.5) * 0.1
+  }));
+
+  let best = 0;
+  pieces.forEach((p, i) => {
+    if (player.facing >= 0 ? p.x > pieces[best].x : p.x < pieces[best].x) best = i;
+  });
+  anchorIdx = best;
+  addDust(cx, cy, 10);
+}
+
+function reassemble() {
+  if (player.state !== 'SHATTERED' || !pieces.length) return;
+  const a = pieces[anchorIdx];
+  const acx = a.x + a.w / 2;
+  const acy = a.y + a.h / 2;
+
+  let tx = acx - a.ox - player.w / 2;
+  let ty = acy - a.oy - player.h / 2 - 2;
+
+  // Bezpečné vystrčení ze zdí i podlahy při složení
+  const sol = solids();
+  for (let iter = 0; iter < 3; iter++) {
+    for (let s of sol) {
+      if (hit({ x: tx, y: ty, w: player.w, h: player.h }, s)) {
+        const overlapTop = (ty + player.h) - s.y;
+        const overlapBottom = (s.y + s.h) - ty;
+        const overlapLeft = (tx + player.w) - s.x;
+        const overlapRight = (s.x + s.w) - tx;
+        const minO = Math.min(overlapTop, overlapBottom, overlapLeft, overlapRight);
+        if (minO === overlapTop) ty = s.y - player.h;
+        else if (minO === overlapBottom) ty = s.y + s.h;
+        else if (minO === overlapLeft) tx = s.x - player.w;
+        else tx = s.x + s.w;
+      }
+    }
+  }
+
+  player.tx = tx;
+  player.ty = ty;
+  player.state = 'REASSEMBLING';
+  player.timer = 0;
+  pieces.forEach(p => { p.sx = p.x; p.sy = p.y; });
+  beep(280, 560, 0.16);
+  addDust(acx, acy, 10);
+}
+
+window.addEventListener('keydown', e => {
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
+  if (!keys[e.code]) {
+    if (e.code === 'KeyE') {
+      if (player.state === 'ASSEMBLED') shatter();
+      else if (player.state === 'SHATTERED') reassemble();
+    }
+    if (e.code === 'KeyQ' && player.state === 'SHATTERED') {
+      anchorIdx = (anchorIdx + 1) % pieces.length;
+      beep(440, 520, 0.06, 0.04);
+    }
+    if (e.code === 'KeyR') loadLevel(lvlIdx);
+  }
+  keys[e.code] = true;
+});
+window.addEventListener('keyup', e => keys[e.code] = false);
+
+canvas.addEventListener('mousedown', e => {
+  if (player.state !== 'SHATTERED') return;
+  const r = canvas.getBoundingClientRect();
+  const mx = e.clientX - r.left;
+  const my = e.clientY - r.top;
+  let best = -1, minD = 50;
+  pieces.forEach((p, i) => {
+    const d = Math.hypot(p.x + p.w / 2 - mx, p.y + p.h / 2 - my);
+    if (d < minD) { minD = d; best = i; }
+  });
+  if (best !== -1) {
+    anchorIdx = best;
+    beep(480, 580, 0.06, 0.04);
+  }
+});
+
+function update() {
+  const sol = solids();
+
+  // Tlačítka (stačí, když se ho dotkne jedna kostka)
+  lvl.buttons.forEach(b => {
+    let active = false;
+    if (player.state === 'ASSEMBLED' && hit(player, b)) active = true;
+    if (player.state !== 'ASSEMBLED') {
+      for (let p of pieces) if (hit(p, b)) { active = true; break; }
+    }
+    if (active && !b.pressed) beep(360, 520, 0.08, 0.04);
+    b.pressed = active;
+  });
+
+  // Dveře
+  lvl.doors.forEach(d => {
+    const b = lvl.buttons.find(btn => btn.id === d.id);
+    const target = (b && b.pressed) ? d.openY : LEVELS[lvlIdx].doors.find(od => od.id === d.id).y;
+    d.currY += (target - d.currY) * 0.14;
+  });
+
+  player.scaleX += (1 - player.scaleX) * 0.18;
+  player.scaleY += (1 - player.scaleY) * 0.18;
+
+  if (player.state === 'ASSEMBLED') {
+    const left = keys['ArrowLeft'] || keys['KeyA'];
+    const right = keys['ArrowRight'] || keys['KeyD'];
+    const targetVx = left ? -player.speed : right ? player.speed : 0;
+    player.vx += (targetVx - player.vx) * 0.25;
+
+    if (Math.abs(player.vx) > 0.3) {
+      player.facing = player.vx > 0 ? 1 : -1;
+      if (player.grounded) player.walk += Math.abs(player.vx) * 0.06;
+    } else {
+      player.walk = 0;
+    }
+
+    if (player.grounded) player.coyote = 8;
+    else if (player.coyote > 0) player.coyote--;
+
+    if ((keys['Space'] || keys['ArrowUp'] || keys['KeyW']) && player.coyote > 0) {
+      player.vy = player.jump;
+      player.grounded = false;
+      player.coyote = 0;
+      player.scaleX = 0.82;
+      player.scaleY = 1.22;
+      beep(240, 420, 0.1);
+      addDust(player.x + player.w / 2, player.y + player.h, 5);
+    }
+
+    player.vy += GRAVITY;
+
+    player.x += player.vx;
+    for (let s of sol) {
+      if (hit(player, s)) {
+        if (player.vx > 0) player.x = s.x - player.w;
+        else if (player.vx < 0) player.x = s.x + s.w;
+        player.vx = 0;
+      }
+    }
+
+    const wasGrounded = player.grounded;
+    player.y += player.vy;
+    player.grounded = false;
+    for (let s of sol) {
+      if (hit(player, s)) {
+        if (player.vy > 0) {
+          if (!wasGrounded && player.vy > 3) {
+            player.scaleX = 1.2;
+            player.scaleY = 0.82;
+            addDust(player.x + player.w / 2, s.y, 4);
+          }
+          player.y = s.y - player.h;
+          player.vy = 0;
+          player.grounded = true;
+        } else if (player.vy < 0) {
+          player.y = s.y + s.h;
+          player.vy = 0;
+        }
+      }
+    }
+
+    for (let h of lvl.hazards) {
+      if (hit(player, h)) {
+        beep(150, 60, 0.2);
+        loadLevel(lvlIdx);
+        return;
+      }
+    }
+
+    if (hit(player, lvl.goal)) {
+      done.add(lvlIdx);
+      beep(440, 660, 0.14);
+      loadLevel((lvlIdx + 1) % LEVELS.length);
+      return;
+    }
+  }
+  else if (player.state === 'SHATTERED') {
+    pieces.forEach(p => {
+      p.vy += GRAVITY;
+      p.x += p.vx;
+      for (let s of sol) {
+        if (hit(p, s)) {
+          if (p.vx > 0) p.x = s.x - p.w;
+          else if (p.vx < 0) p.x = s.x + s.w;
+          p.vx = -p.vx * 0.35;
+        }
+      }
+      p.y += p.vy;
+      for (let s of sol) {
+        if (hit(p, s)) {
+          if (p.vy > 0) {
+            p.y = s.y - p.h;
+            p.vy = -p.vy * 0.22;
+            p.vx *= 0.91; // Nízké tření – kostky pěkně dokloužou skrz průlez
+            p.vrot *= 0.6;
+            if (Math.abs(p.vy) < 0.5) p.vy = 0;
+          } else if (p.vy < 0) {
+            p.y = s.y + s.h;
+            p.vy = 0;
+          }
+        }
+      }
+      p.rot += p.vrot;
+    });
+
+    // Automaticky udržuje jako kotvu nejvíce přední kostku, dokud hráč neklikne/nezmáčkne Q
+  }
+  else if (player.state === 'REASSEMBLING') {
+    player.timer += 0.09;
+    const t = Math.min(player.timer, 1);
+    const ease = 1 - Math.pow(1 - t, 3);
+
+    pieces.forEach(p => {
+      const dx = player.tx + player.w / 2 + p.ox - p.w / 2;
+      const dy = player.ty + player.h / 2 + p.oy - p.h / 2;
+      p.x = p.sx + (dx - p.sx) * ease;
+      p.y = p.sy + (dy - p.sy) * ease;
+      p.rot *= (1 - t);
+    });
+
+    if (t >= 1) {
+      player.x = player.tx;
+      player.y = player.ty;
+      player.vy = -6.8; // Pěkný Bounce Back odraz nahoru
+      player.vx = 0;
+      player.scaleX = 0.84;
+      player.scaleY = 1.2;
+      player.state = 'ASSEMBLED';
+      pieces = [];
+      addDust(player.x + player.w / 2, player.y + player.h / 2, 8);
+    }
+  }
+
+  dust.forEach(d => { d.x += d.vx; d.y += d.vy; d.life -= 0.045; });
+  dust = dust.filter(d => d.life > 0);
+}
+
+function drawEyes(facing) {
+  ctx.fillStyle = PAPER;
+  const ex = facing >= 0 ? 2 : -2;
+  ctx.fillRect(-4 + ex, -2, 2.5, 4);
+  ctx.fillRect(2 + ex, -2, 2.5, 4);
+}
+
+function draw() {
+  ctx.fillStyle = PAPER;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Cíl
+  const g = lvl.goal;
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([5, 5]);
+  ctx.strokeRect(g.x, g.y, g.w, g.h);
+  ctx.setLineDash([]);
+  ctx.fillStyle = INK;
+  ctx.fillRect(g.x + g.w / 2 - 3, g.y + g.h / 2 - 3, 6, 6);
+
+  // Zdi
+  ctx.fillStyle = INK;
+  lvl.walls.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
+
+  // Tlačítka
+  lvl.buttons.forEach(b => {
+    const off = b.pressed ? 6 : 0;
+    ctx.fillRect(b.x, b.y + off, b.w, b.h - off);
+  });
+
+  // Dveře
+  lvl.doors.forEach(d => {
+    ctx.fillStyle = PAPER;
+    ctx.fillRect(d.x, d.currY, d.w, d.h);
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(d.x, d.currY, d.w, d.h);
+    ctx.beginPath();
+    ctx.moveTo(d.x, d.currY);
+    ctx.lineTo(d.x + d.w, d.currY + d.h);
+    ctx.stroke();
+  });
+
+  // Nebezpečí
+  ctx.fillStyle = INK;
+  lvl.hazards.forEach(h => {
+    for (let x = h.x; x < h.x + h.w; x += 14) {
+      ctx.beginPath();
+      ctx.moveTo(x, h.y + h.h);
+      ctx.lineTo(x + 7, h.y);
+      ctx.lineTo(x + 14, h.y + h.h);
+      ctx.fill();
+    }
+  });
+
+  // Panáček
+  if (player.state === 'ASSEMBLED') {
+    const cx = player.x + player.w / 2;
+    const cy = player.y + player.h / 2;
+    const swing = Math.sin(player.walk) * 3.5;
+
+    ctx.save();
+    ctx.translate(cx, cy + player.h / 2);
+    ctx.scale(player.scaleX, player.scaleY);
+    ctx.translate(0, -player.h / 2);
+
+    PARTS.forEach(p => {
+      let ay = 0;
+      if (p.limb === 'legL') ay = swing;
+      if (p.limb === 'legR') ay = -swing;
+      if (p.limb === 'armL') ay = -swing * 0.6;
+      if (p.limb === 'armR') ay = swing * 0.6;
+      if (p.head) ay = -Math.abs(swing) * 0.25;
+
+      ctx.save();
+      ctx.translate(p.ox, p.oy + ay);
+      ctx.fillStyle = INK;
+      ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      if (p.head) drawEyes(player.facing);
+      ctx.restore();
+    });
+
+    ctx.restore();
+  } else {
+    const a = pieces[anchorIdx];
+    if (a) {
+      const ax = a.x + a.w / 2;
+      const ay = a.y + a.h / 2;
+      ctx.strokeStyle = 'rgba(23, 23, 23, 0.25)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([3, 4]);
+      pieces.forEach((p, i) => {
+        if (i === anchorIdx) return;
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(p.x + p.w / 2, p.y + p.h / 2);
+        ctx.stroke();
+      });
+      ctx.setLineDash([]);
+    }
+
+    pieces.forEach((p, i) => {
+      ctx.save();
+      ctx.translate(p.x + p.w / 2, p.y + p.h / 2);
+      ctx.rotate(p.rot);
+
+      if (i === anchorIdx) {
+        ctx.fillStyle = PAPER;
+        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        ctx.strokeStyle = INK;
+        ctx.lineWidth = 2.5;
+        ctx.strokeRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        ctx.fillStyle = INK;
+        if (p.head) {
+          ctx.fillRect(-4, -2, 2.5, 4);
+          ctx.fillRect(2, -2, 2.5, 4);
+        } else {
+          ctx.fillRect(-2.5, -2.5, 5, 5);
+        }
+      } else {
+        ctx.fillStyle = INK;
+        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        if (p.head) drawEyes(player.facing);
+      }
+      ctx.restore();
+    });
+  }
+
+  ctx.fillStyle = INK;
+  dust.forEach(d => {
+    ctx.globalAlpha = d.life * 0.6;
+    ctx.fillRect(d.x - d.s / 2, d.y - d.s / 2, d.s, d.s);
+  });
+  ctx.globalAlpha = 1;
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+loadLevel(0);
+loop();
+</script>
+</body>
+</html>
