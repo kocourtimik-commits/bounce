@@ -11,7 +11,10 @@
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     min-height: 100vh; overflow: hidden;
   }
-  canvas { background: #f5f4f0; display: block; cursor: pointer; }
+  canvas {
+    background: #f5f4f0; display: block; cursor: pointer;
+    width: min(100vw, calc(100vh * 880 / 460)); height: auto;
+  }
 </style>
 </head>
 <body>
@@ -23,7 +26,8 @@ const INK = '#171717';
 const PAPER = '#f5f4f0';
 const W = 880, H = 460;
 
-const SLOW_FACTOR = 0.65;
+const STEP = 1000 / 39;
+const ENDLESS_MOVE_SPEED = 5.0;
 
 let actx = null;
 function beep(f1, f2, dur = 0.12, vol = 0.05) {
@@ -51,181 +55,134 @@ const PARTS = [
   { ox: 5,   oy: 21,  w: 8,  h: 13, limb: 'legR' }
 ];
 
+const B = (x, y, w, h) => ({ x, y, w, h });
+const FLOOR = (x = 0, w = 880) => B(x, 390, w, 70);
+const PIT = (x, w) => ({ x, y: 442, w, h: 18 });
+const GOAL = (x, y) => ({ x, y, w: 46, h: 70 });
+const WEAK = (x) => ({ x, y: 16, w: 30, h: 374, broken: false });
+
+function mk(o) {
+  return {
+    name: o.name, hint: o.hint, spawn: o.spawn, goal: o.goal,
+    isTutorial: !!o.isTutorial,
+    walls: [B(0, 0, 880, 16), B(0, 0, 16, 460), B(864, 0, 16, 460), ...(o.walls || [])],
+    buttons: o.buttons || [], doors: o.doors || [], hazards: o.hazards || [],
+    springs: o.springs || [], windZones: o.windZones || [], breakableWalls: o.breakableWalls || []
+  };
+}
+
 const LEVELS = [
-  { name: '01 // LOW CLEARANCE', hint: 'Run [D] and press [E] before the wall',
-    spawn: { x: 60, y: 336 }, goal: { x: 800, y: 320, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 390, w: 880, h: 70 },{ x: 0, y: 0, w: 880, h: 16 },
-      { x: 0, y: 0, w: 16, h: 460 },{ x: 864, y: 0, w: 16, h: 460 },
-      { x: 400, y: 16, w: 40, h: 334 }
-    ], buttons: [], doors: [], hazards: [] },
-  { name: '02 // HEIGHT', hint: 'Jump [SPACE], break [E]',
-    spawn: { x: 80, y: 336 }, goal: { x: 700, y: 130, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 390, w: 880, h: 70 },{ x: 0, y: 0, w: 880, h: 16 },
-      { x: 0, y: 0, w: 16, h: 460 },{ x: 864, y: 0, w: 16, h: 460 },
-      { x: 500, y: 200, w: 380, h: 18 }
-    ], buttons: [], doors: [], hazards: [] },
-  { name: '03 // LONG GAP', hint: 'Sprint, jump, press [E] in mid-air',
-    spawn: { x: 60, y: 336 }, goal: { x: 800, y: 320, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 390, w: 220, h: 70 },{ x: 570, y: 390, w: 310, h: 70 },
-      { x: 0, y: 0, w: 880, h: 16 },{ x: 0, y: 0, w: 16, h: 460 },{ x: 864, y: 0, w: 16, h: 460 }
-    ], buttons: [], doors: [], hazards: [{ x: 220, y: 442, w: 350, h: 18 }] },
-  { name: '04 // SPIKE FALL', hint: 'Drop down and break [E]',
-    spawn: { x: 60, y: 80 }, goal: { x: 680, y: 320, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 140, w: 400, h: 320 },{ x: 640, y: 390, w: 240, h: 70 },
-      { x: 0, y: 0, w: 880, h: 16 },{ x: 864, y: 0, w: 16, h: 460 }
-    ], buttons: [], doors: [], hazards: [{ x: 400, y: 442, w: 240, h: 18 }] },
-  { name: '05 // FLOOR HOLE', hint: 'Break [E] and fall through',
-    spawn: { x: 80, y: 226 }, goal: { x: 700, y: 320, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 280, w: 420, h: 20 },{ x: 444, y: 280, w: 436, h: 20 },
-      { x: 0, y: 390, w: 880, h: 70 },{ x: 0, y: 0, w: 880, h: 16 },
-      { x: 0, y: 0, w: 16, h: 460 },{ x: 864, y: 0, w: 16, h: 460 }
-    ], buttons: [], doors: [], hazards: [] },
-  { name: '06 // PILLARS', hint: 'Break [E] through the gap',
-    spawn: { x: 40, y: 286 }, goal: { x: 800, y: 250, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 340, w: 220, h: 120 },
-      { x: 600, y: 320, w: 280, h: 140 },
-      { x: 400, y: 260, w: 40, h: 200 },
-      { x: 400, y: 0, w: 40, h: 220 },
-      { x: 0, y: 0, w: 880, h: 16 },
-      { x: 0, y: 0, w: 16, h: 460 },
-      { x: 864, y: 0, w: 16, h: 460 }
-    ], buttons: [], doors: [],
-    hazards: [{ x: 220, y: 442, w: 180, h: 18 }, { x: 440, y: 442, w: 160, h: 18 }] },
-  { name: '07 // BETWEEN WALLS', hint: 'Break [E] and fly over spikes',
-    spawn: { x: 40, y: 336 }, goal: { x: 700, y: 320, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 390, w: 150, h: 70 },{ x: 700, y: 390, w: 180, h: 70 },
-      { x: 250, y: 80, w: 30, h: 362 },{ x: 600, y: 80, w: 30, h: 362 },
-      { x: 0, y: 0, w: 880, h: 16 },{ x: 0, y: 0, w: 16, h: 460 },{ x: 864, y: 0, w: 16, h: 460 }
-    ], buttons: [], doors: [], hazards: [{ x: 150, y: 442, w: 550, h: 18 }] },
-  { name: '08 // NARROW PLATFORMS', hint: 'Use the bounce after [E]',
-    spawn: { x: 60, y: 336 }, goal: { x: 750, y: 130, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 390, w: 880, h: 70 },{ x: 0, y: 0, w: 880, h: 16 },
-      { x: 0, y: 0, w: 16, h: 460 },{ x: 864, y: 0, w: 16, h: 460 },
-      { x: 200, y: 310, w: 45, h: 18 },{ x: 660, y: 170, w: 50, h: 18 }
-    ], buttons: [], doors: [], hazards: [] },
-  { name: '09 // COMBINATION', hint: 'Clear spikes while broken [E]',
-    spawn: { x: 40, y: 140 }, goal: { x: 780, y: 320, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 200, w: 180, h: 260 },{ x: 600, y: 390, w: 280, h: 70 },
-      { x: 560, y: 280, w: 320, h: 18 },{ x: 0, y: 0, w: 880, h: 16 },
-      { x: 0, y: 0, w: 16, h: 460 },{ x: 864, y: 0, w: 16, h: 460 }
-    ], buttons: [], doors: [], hazards: [{ x: 180, y: 442, w: 420, h: 18 }] },
-  { name: '10 // FINALE', hint: 'Everything at once!',
-    spawn: { x: 60, y: 336 }, goal: { x: 800, y: 110, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 390, w: 200, h: 70 },{ x: 200, y: 16, w: 40, h: 334 },
-      { x: 590, y: 390, w: 290, h: 70 },{ x: 700, y: 180, w: 180, h: 18 },
-      { x: 0, y: 0, w: 880, h: 16 },{ x: 0, y: 0, w: 16, h: 460 },{ x: 864, y: 0, w: 16, h: 460 }
-    ],
-    buttons: [{ id: 10, x: 580, y: 378, w: 74, h: 12, pressed: false }],
-    doors: [{ id: 10, x: 700, y: 180, w: 22, h: 140, openY: 320, currY: 180 }],
-    hazards: [{ x: 240, y: 442, w: 350, h: 18 }] },
-  { name: '11 // WIND LIFT', hint: 'Let the wind lift you',
-    spawn: { x: 60, y: 336 }, goal: { x: 800, y: 60, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 390, w: 880, h: 70 },{ x: 0, y: 0, w: 880, h: 16 },
-      { x: 0, y: 0, w: 16, h: 460 },{ x: 864, y: 0, w: 16, h: 460 },
-      { x: 700, y: 130, w: 180, h: 18 }
-    ], buttons: [], doors: [], hazards: [],
-    windZones: [{ x: 0, y: 16, w: 880, h: 374, vx: 0, vy: -0.4 }] },
-  { name: '12 // CROSSWIND', hint: 'Wind pushes right — walk left against it',
-    spawn: { x: 800, y: 336 }, goal: { x: 60, y: 320, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 390, w: 880, h: 70 },
-      { x: 0, y: 0, w: 880, h: 16 },
-      { x: 0, y: 0, w: 16, h: 460 },
-      { x: 864, y: 0, w: 16, h: 460 }
-    ], buttons: [], doors: [], hazards: [],
-    windZones: [{ x: 0, y: 16, w: 880, h: 374, vx: 0.35, vy: 0 }] },
-  { name: '13 // WIND TUNNEL', hint: 'Multiple wind zones',
-    spawn: { x: 60, y: 336 }, goal: { x: 790, y: 60, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 390, w: 880, h: 70 },{ x: 0, y: 0, w: 880, h: 16 },
-      { x: 0, y: 0, w: 16, h: 460 },{ x: 864, y: 0, w: 16, h: 460 },
-      { x: 300, y: 200, w: 30, h: 190 },{ x: 600, y: 100, w: 30, h: 200 },
-      { x: 700, y: 130, w: 164, h: 18 }
-    ], buttons: [], doors: [], hazards: [],
-    windZones: [
-      { x: 16, y: 100, w: 284, h: 290, vx: 0.35, vy: 0 },
-      { x: 330, y: 16, w: 270, h: 374, vx: 0, vy: -0.35 },
-      { x: 630, y: 100, w: 234, h: 290, vx: 0.35, vy: 0 }
-    ] },
-  { name: '14 // BREAKTHROUGH', hint: 'Smash the weak wall with a piece',
-    spawn: { x: 60, y: 336 }, goal: { x: 800, y: 320, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 390, w: 880, h: 70 },{ x: 0, y: 0, w: 880, h: 16 },
-      { x: 0, y: 0, w: 16, h: 460 },{ x: 864, y: 0, w: 16, h: 460 }
-    ], buttons: [], doors: [], hazards: [],
-    breakableWalls: [{ x: 420, y: 250, w: 40, h: 140, hp: 1, broken: false }] },
-  { name: '15 // TRIPLE BREAK', hint: 'Break all three walls',
-    spawn: { x: 60, y: 336 }, goal: { x: 800, y: 320, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 390, w: 880, h: 70 },{ x: 0, y: 0, w: 880, h: 16 },
-      { x: 0, y: 0, w: 16, h: 460 },{ x: 864, y: 0, w: 16, h: 460 }
-    ], buttons: [], doors: [], hazards: [],
-    breakableWalls: [
-      { x: 260, y: 260, w: 30, h: 130, hp: 1, broken: false },
-      { x: 440, y: 260, w: 30, h: 130, hp: 1, broken: false },
-      { x: 620, y: 260, w: 30, h: 130, hp: 1, broken: false }
-    ] },
-  { name: '16 // BREAK & GAP', hint: 'Break the wall, cross the gap',
-    spawn: { x: 60, y: 336 }, goal: { x: 800, y: 320, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 390, w: 300, h: 70 },{ x: 620, y: 390, w: 260, h: 70 },
-      { x: 0, y: 0, w: 880, h: 16 },{ x: 0, y: 0, w: 16, h: 460 },{ x: 864, y: 0, w: 16, h: 460 }
-    ], buttons: [], doors: [], hazards: [{ x: 300, y: 442, w: 320, h: 18 }],
-    breakableWalls: [{ x: 240, y: 16, w: 30, h: 374, hp: 1, broken: false }] },
-  { name: '17 // TIGHT GATE', hint: 'Door only opens briefly — you must split [E]!',
-    spawn: { x: 60, y: 336 }, goal: { x: 800, y: 320, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 390, w: 880, h: 70 },{ x: 0, y: 0, w: 880, h: 16 },
-      { x: 0, y: 0, w: 16, h: 460 },{ x: 864, y: 0, w: 16, h: 460 },
-      { x: 520, y: 16, w: 24, h: 200 }
-    ],
-    buttons: [{ id: 1, x: 260, y: 378, w: 76, h: 12, pressed: false, duration: 50, timer: 0 }],
-    doors: [{ id: 1, x: 520, y: 216, w: 24, h: 174, openY: 60, currY: 216 }],
-    hazards: [] }
+  mk({ name: '01', hint: 'Too low for you! Press [E] before the wall, slide under, [E] again',
+    isTutorial: true,
+    spawn: { x: 60, y: 336 }, goal: GOAL(760, 320),
+    walls: [FLOOR(), B(500, 16, 34, 334)] }),
+  mk({ name: '02', hint: 'Run at the cracked wall and press [E] just before it',
+    spawn: { x: 60, y: 336 }, goal: GOAL(790, 320),
+    walls: [FLOOR()],
+    breakableWalls: [WEAK(450)] }),
+  mk({ name: '03', hint: 'Jump, [E] in the air, then [E] again above the far ledge',
+    spawn: { x: 40, y: 336 }, goal: GOAL(790, 320),
+    walls: [B(0, 390, 140, 70), B(550, 390, 330, 70)],
+    hazards: [PIT(140, 410)] }),
+  mk({ name: '04', hint: 'Fall through the slit, press [S] to pick the lowest piece and [E] before the spikes!',
+    spawn: { x: 70, y: 96 }, goal: GOAL(780, 320),
+    walls: [B(0, 390, 380, 70), B(480, 390, 400, 70), B(16, 150, 408, 20), B(452, 150, 412, 20)],
+    hazards: [PIT(380, 100)] }),
+  mk({ name: '05', hint: 'Only your pieces fit in the tunnel — press the button, then [E]',
+    spawn: { x: 60, y: 336 }, goal: GOAL(790, 320),
+    walls: [FLOOR(), B(240, 300, 200, 50)],
+    buttons: [{ id: 1, x: 262, y: 378, w: 50, h: 12, pressed: false }],
+    doors: [{ id: 1, x: 600, y: 16, w: 26, h: 374, openY: -300, currY: 16 }] }),
+  mk({ name: '06', hint: 'Jump, press [E] in the wind, then [E] again',
+    spawn: { x: 60, y: 336 }, goal: GOAL(790, 320),
+    walls: [B(0, 390, 200, 70), B(680, 390, 200, 70)],
+    hazards: [PIT(200, 480)],
+    windZones: [{ x: 200, y: 16, w: 480, h: 374, ax: 0.3, ay: 0 }] }),
+  mk({ name: '07', hint: 'Break the wall, then cross the pit in pieces',
+    spawn: { x: 60, y: 336 }, goal: GOAL(800, 320),
+    walls: [B(0, 390, 300, 70), B(700, 390, 180, 70)],
+    hazards: [PIT(300, 400)],
+    breakableWalls: [WEAK(200)] }),
+  mk({ name: '08', hint: 'Fly your pieces through the window, then [E] on the other side',
+    spawn: { x: 50, y: 276 }, goal: GOAL(760, 250),
+    walls: [B(16, 330, 130, 130), B(380, 16, 56, 200), B(380, 256, 56, 204), B(560, 320, 304, 140)],
+    hazards: [{ x: 146, y: 442, w: 414, h: 18 }] }),
+  mk({ name: '09', hint: 'Spring up, run along the roof, squeeze under the wall',
+    spawn: { x: 30, y: 336 }, goal: GOAL(790, 120),
+    walls: [FLOOR(), B(260, 190, 604, 18), B(700, 16, 30, 134)],
+    springs: [{ x: 90, y: 378, w: 60, h: 12, power: 14 }] }),
+  mk({ name: '10', hint: 'Slide under the wall, let the wind lift your pieces, pick one up top, [E]',
+    spawn: { x: 60, y: 336 }, goal: GOAL(790, 50),
+    walls: [FLOOR(), B(380, 120, 20, 230), B(428, 120, 20, 270), B(448, 120, 416, 20)],
+    windZones: [{ x: 400, y: 16, w: 28, h: 374, ax: 0, ay: -0.6 }] }),
+  mk({ name: '11', hint: 'Three walls — one shatter is not enough for all of them',
+    spawn: { x: 50, y: 336 }, goal: GOAL(800, 320),
+    walls: [FLOOR()],
+    breakableWalls: [WEAK(250), WEAK(450), WEAK(650)] }),
+  mk({ name: '12', hint: 'Fall through the gap, then slide under the second wall',
+    spawn: { x: 70, y: 196 }, goal: GOAL(760, 320),
+    walls: [FLOOR(), B(16, 250, 424, 20), B(468, 250, 396, 20), B(620, 270, 34, 80)] }),
+  mk({ name: '13', hint: 'Spring onto the roof and smash the cracked wall',
+    spawn: { x: 30, y: 336 }, goal: GOAL(790, 120),
+    walls: [FLOOR(), B(260, 190, 604, 18)],
+    springs: [{ x: 90, y: 378, w: 60, h: 12, power: 14 }],
+    breakableWalls: [{ x: 610, y: 16, w: 30, h: 174, broken: false }] }),
+  mk({ name: '14', hint: 'The first gap is too wide — shatter, [E] above the pillar, then hop on',
+    spawn: { x: 40, y: 246 }, goal: GOAL(818, 226),
+    walls: [B(16, 300, 74, 160), B(460, 312, 70, 148), B(600, 316, 55, 144), B(735, 324, 55, 136), B(818, 296, 46, 164)],
+    hazards: [{ x: 90, y: 442, w: 728, h: 18 }] }),
+  mk({ name: '15', hint: 'Spring up, then jump and shatter across the sky gap',
+    spawn: { x: 30, y: 336 }, goal: GOAL(810, 120),
+    walls: [FLOOR(), B(260, 190, 180, 18), B(800, 190, 64, 18)],
+    springs: [{ x: 90, y: 378, w: 60, h: 12, power: 14 }],
+    hazards: [{ x: 440, y: 372, w: 360, h: 18 }] }),
+  mk({ name: '16', hint: 'Jump, [E] right away, press [E] again when your piece is above the far tower',
+    spawn: { x: 115, y: 116 }, goal: GOAL(602, 115),
+    walls: [B(100, 170, 60, 290), B(580, 185, 90, 275)],
+    hazards: [{ x: 160, y: 442, w: 420, h: 18 }] }),
+  mk({ name: '17', hint: 'Slot, cracked wall, spring — in that order',
+    spawn: { x: 50, y: 336 }, goal: GOAL(790, 120),
+    walls: [FLOOR(), B(220, 16, 34, 334), B(680, 190, 184, 18)],
+    breakableWalls: [WEAK(420)],
+    springs: [{ x: 500, y: 378, w: 60, h: 12, power: 14 }] }),
+  mk({ name: '18', hint: 'Press the button, then sprint through the gate before it closes',
+    spawn: { x: 40, y: 336 }, goal: GOAL(820, 320),
+    walls: [FLOOR(), B(750, 16, 24, 200)],
+    buttons: [{ id: 1, x: 40, y: 378, w: 76, h: 12, pressed: false, duration: 78, timer: 0 }],
+    doors: [{ id: 1, x: 750, y: 216, w: 24, h: 174, openY: 60, currY: 216 }] }),
+  mk({ name: '19', hint: 'Jump [SPACE] then [E] — the pieces fly higher than you can',
+    spawn: { x: 80, y: 336 }, goal: GOAL(700, 130),
+    walls: [FLOOR(), B(500, 200, 380, 18)] }),
+  mk({ name: '20', hint: 'Shatter to fly over the spike pit between the walls',
+    spawn: { x: 40, y: 336 }, goal: GOAL(700, 320),
+    walls: [B(0, 390, 150, 70), B(700, 390, 180, 70), B(250, 250, 30, 192), B(600, 250, 30, 192)],
+    hazards: [{ x: 150, y: 442, w: 550, h: 18 }] }),
+  mk({ name: '21', hint: 'Fight the wind and reach the goal on the left',
+    spawn: { x: 800, y: 336 }, goal: GOAL(60, 320),
+    walls: [FLOOR(), B(400, 320, 40, 70)],
+    windZones: [{ x: 16, y: 16, w: 848, h: 374, ax: 0.35, ay: 0 }] })
 ];
 
-// ============= PROGRESS =============
 let done = new Set();
 let bestTimes = {};
 let bestDeaths = {};
 let totalDeaths = 0;
 let bestSpeedrun = null;
 let speedrunAttempts = 0;
+let cheatAirJump = false;
+let bestEndlessDistance = 0;
 
 function saveProgress() {
   try {
-    localStorage.setItem('bounceback_v11', JSON.stringify({
-      done: [...done], bestTimes, bestDeaths, totalDeaths, bestSpeedrun, speedrunAttempts
+    localStorage.setItem('bounceback_v20', JSON.stringify({
+      done: [...done], bestTimes, bestDeaths, totalDeaths, bestSpeedrun, speedrunAttempts, cheatAirJump, bestEndlessDistance
     }));
   } catch(e) {}
 }
 function loadProgress() {
   try {
-    const raw = localStorage.getItem('bounceback_v11');
-    if (!raw) {
-      const old = localStorage.getItem('bounceback_v10') || localStorage.getItem('bounceback_v9') || localStorage.getItem('bounceback_v8') || localStorage.getItem('bounceback_v7') || localStorage.getItem('bounceback_v6') || localStorage.getItem('bounceback_v5');
-      if (old) {
-        const d = JSON.parse(old);
-        if (d.done) done = new Set([...d.done].filter(i => i < LEVELS.length));
-        if (d.bestTimes) bestTimes = d.bestTimes;
-        if (d.bestDeaths) bestDeaths = d.bestDeaths;
-        if (d.totalDeaths) totalDeaths = d.totalDeaths;
-        if (d.bestSpeedrun) bestSpeedrun = d.bestSpeedrun;
-        if (d.speedrunAttempts) speedrunAttempts = d.speedrunAttempts;
-      }
-      return;
-    }
+    const raw = localStorage.getItem('bounceback_v20') || localStorage.getItem('bounceback_v19') || localStorage.getItem('bounceback_v18');
+    if (!raw) return;
     const d = JSON.parse(raw);
     if (d.done) done = new Set([...d.done].filter(i => i < LEVELS.length));
     if (d.bestTimes) bestTimes = d.bestTimes;
@@ -233,11 +190,22 @@ function loadProgress() {
     if (d.totalDeaths) totalDeaths = d.totalDeaths;
     if (d.bestSpeedrun) bestSpeedrun = d.bestSpeedrun;
     if (d.speedrunAttempts) speedrunAttempts = d.speedrunAttempts;
+    if (d.cheatAirJump) cheatAirJump = true;
+    if (d.bestEndlessDistance) bestEndlessDistance = d.bestEndlessDistance;
   } catch(e) {}
 }
 loadProgress();
 
-// ============= STATE =============
+const endless = {
+  chunks: [],
+  nextChunkX: 100,
+  cameraX: -150,
+  distance: 0,
+  runStart: 0,
+  runTime: 0,
+  best: bestEndlessDistance
+};
+
 let screen = 'MENU';
 let menuIndex = 0;
 let menuButtonsRects = [];
@@ -247,11 +215,16 @@ let levelHoverIdx = 0;
 let lvlIdx = 0;
 let lvl = null;
 
+let cheatsIndex = 0;
+let cheatsHelpTimer = 0;
+let airJumpBtnRect = null;
+let helpBtnRect = null;
+let cheatsBackBtnRect = null;
+
 let lvlStartTime = 0;
 let lvlTime = 0;
 let lvlDeaths = 0;
 let introFrames = 0;
-let introTotal = 60;
 let completeFrames = 0;
 let completeNewBest = false;
 
@@ -261,7 +234,7 @@ let speedrunTotalTime = 0;
 let lastFrameNow = 0;
 
 let shakeAmount = 0;
-let physAccum = 0;
+let acc = 0;
 
 const INTRO_TOTAL = 60;
 const COMPLETE_TOTAL = 36;
@@ -272,25 +245,30 @@ let player = {
   vx: 0, vy: 0, speed: 4.8, jump: -10.2,
   grounded: false, coyote: 0,
   state: 'ASSEMBLED', timer: 0, tx: 0, ty: 0,
-  facing: 1, walk: 0, scaleX: 1, scaleY: 1
+  facing: 1, walk: 0, scaleX: 1, scaleY: 1, px: 0, py: 0
 };
 
 let pieces = [];
-let anchorIdx = 0;
+let anchorId = 0;
 let dust = [];
 let keys = {};
 let animFrame = 0;
 
 function getMenuItems() {
-  const items = ['PLAY', 'LEVELS', 'CONTROLS'];
-  if (done.size === LEVELS.length) items.push('SPEEDRUN');
+  const items = ['PLAY', 'LEVELS', 'ENDLESS (beta)', 'CONTROLS'];
+  if (done.size === LEVELS.length) items.push('SPEEDRUN', 'CHEATS');
   return items;
 }
+function nextUndone() {
+  for (let i = 0; i < LEVELS.length; i++) if (!done.has(i)) return i;
+  return 0;
+}
 
-function openMenu() { screen = 'MENU'; menuIndex = 0; }
-function openLevels() { screen = 'LEVELS'; levelHoverIdx = 0; }
+function openMenu() { screen = 'MENU'; menuIndex = 0; cheatsHelpTimer = 0; }
+function openLevels() { screen = 'LEVELS'; levelHoverIdx = nextUndone(); }
 function openControls() { screen = 'CONTROLS'; }
 function openSpeedrunMenu() { screen = 'SPEEDRUN_MENU'; }
+function openCheats() { screen = 'CHEATS'; cheatsIndex = 0; cheatsHelpTimer = 0; }
 
 function startSpeedrun() {
   speedrunMode = true;
@@ -300,13 +278,29 @@ function startSpeedrun() {
   loadLevel(0);
 }
 
+function startEndless() {
+  screen = 'ENDLESS';
+  endless.chunks = [];
+  endless.nextChunkX = 100;
+  endless.cameraX = -150;
+  endless.distance = 0;
+  endless.runStart = performance.now();
+  endless.runTime = 0;
+  Object.assign(player, {
+    x: 150, y: 336, px: 150, py: 336,
+    vx: 0, vy: 0, grounded: false, coyote: 0,
+    state: 'ASSEMBLED', scaleX: 1, scaleY: 1, walk: 0, facing: 1
+  });
+  pieces = []; dust = []; anchorId = 0;
+  shakeAmount = 0;
+  acc = 0;
+}
+
 function loadLevel(i) {
   if (i >= LEVELS.length) {
     if (speedrunMode) {
       speedrunTotalTime = speedrunElapsed;
-      if (!bestSpeedrun || speedrunTotalTime < bestSpeedrun) {
-        bestSpeedrun = speedrunTotalTime;
-      }
+      if (!bestSpeedrun || speedrunTotalTime < bestSpeedrun) bestSpeedrun = speedrunTotalTime;
       speedrunMode = false;
       screen = 'SPEEDRUN_DONE';
       saveProgress();
@@ -319,41 +313,44 @@ function loadLevel(i) {
   lvlIdx = i;
   lvl = JSON.parse(JSON.stringify(LEVELS[i]));
   resetPlayerToSpawn();
-  introTotal = INTRO_TOTAL;
-  introFrames = introTotal;
+  introFrames = INTRO_TOTAL;
   completeFrames = 0;
   completeNewBest = false;
   lvlTime = 0;
   lvlDeaths = 0;
   lvlStartTime = performance.now();
   shakeAmount = 0;
-  physAccum = 0;
+  acc = 0;
 }
 function resetPlayerToSpawn() {
   Object.assign(player, {
-    x: lvl.spawn.x, y: lvl.spawn.y, vx: 0, vy: 0,
-    grounded: false, coyote: 0, state: 'ASSEMBLED', scaleX: 1, scaleY: 1
+    x: lvl.spawn.x, y: lvl.spawn.y, px: lvl.spawn.x, py: lvl.spawn.y,
+    vx: 0, vy: 0, grounded: false, coyote: 0, state: 'ASSEMBLED', scaleX: 1, scaleY: 1
   });
-  pieces = []; dust = []; anchorIdx = 0;
+  pieces = []; dust = []; anchorId = 0;
 }
 function die() {
   const px = player.x + player.w/2;
   const py = player.y + player.h/2;
   lvlDeaths++;
   totalDeaths++;
-  shakeAmount = 12;
+  shakeAmount = 10;
   beep(150, 60, 0.3);
   saveProgress();
   resetPlayerToSpawn();
   addDust(px, py, 20);
 }
+function restartLevel() {
+  lvl = JSON.parse(JSON.stringify(LEVELS[lvlIdx]));
+  resetPlayerToSpawn();
+  lvlStartTime = performance.now(); lvlTime = 0;
+  introFrames = INTRO_TOTAL;
+}
 
 function solids() {
   const s = [...lvl.walls];
   lvl.doors.forEach(d => s.push({ x: d.x, y: d.currY, w: d.w, h: d.h }));
-  (lvl.breakableWalls || []).forEach(w => {
-    if (!w.broken) s.push({ x: w.x, y: w.y, w: w.w, h: w.h });
-  });
+  lvl.breakableWalls.forEach(w => { if (!w.broken) s.push({ x: w.x, y: w.y, w: w.w, h: w.h }); });
   return s;
 }
 function hit(a, b) {
@@ -366,54 +363,73 @@ function addDust(x, y, n = 6) {
   }
 }
 
+function pickDefaultAnchor() {
+  if (!pieces.length) return;
+  let best = pieces[0];
+  pieces.forEach(p => { if (player.facing >= 0 ? p.x > best.x : p.x < best.x) best = p; });
+  anchorId = best.id;
+}
+
 function shatter() {
   if (player.state !== 'ASSEMBLED') return;
   player.state = 'SHATTERED';
   beep(220, 90, 0.14);
   const cx = player.x + player.w/2, cy = player.y + player.h/2;
-  const boostVx = player.vx * 1.5 + player.facing * 2.5;
-  pieces = PARTS.map(p => ({
-    x: cx + p.ox - p.w/2, y: cy + p.oy - p.h/2,
-    w: p.w, h: p.h, ox: p.ox, oy: p.oy, head: !!p.head,
-    vx: boostVx + p.ox*0.14 + (Math.random()-0.5)*0.8,
-    vy: player.vy*0.85 + p.oy*0.04 - 1.2,
-    rot: 0, vrot: (Math.random()-0.5)*0.1,
-    dead: false
-  }));
-  let best = 0;
-  pieces.forEach((p, i) => {
-    if (player.facing >= 0 ? p.x > pieces[best].x : p.x < pieces[best].x) best = i;
+  const boostVx = (screen === 'ENDLESS')
+    ? Math.max(0, player.vx * 1.2) + player.facing * 5.5
+    : (player.vx * 1.5 + player.facing * 2.5);
+  pieces = PARTS.map((p, i) => {
+    const x = cx + p.ox - p.w/2, y = cy + p.oy - p.h/2;
+    return {
+      id: i, x, y, px: x, py: y,
+      w: p.w, h: p.h, ox: p.ox, oy: p.oy, head: !!p.head,
+      vx: boostVx + p.ox*0.14 + (Math.random()-0.5)*0.8,
+      vy: player.vy*0.85 + p.oy*0.04 - 1.2,
+      rot: 0, vrot: (Math.random()-0.5)*0.1, dead: false
+    };
   });
-  anchorIdx = best;
+  pickDefaultAnchor();
   addDust(cx, cy, 10);
+}
+
+const OFFSETS = (() => {
+  const a = [];
+  for (let dy = -120; dy <= 120; dy += 2) for (let dx = -120; dx <= 120; dx += 2) a.push([dx, dy, dx*dx + dy*dy]);
+  a.sort((p, q) => p[2] - q[2]);
+  return a;
+})();
+function findFree(tx, ty) {
+  const sol = solids();
+  for (const [dx, dy] of OFFSETS) {
+    const x = Math.max(16, Math.min(tx + dx, 864 - player.w));
+    const y = Math.max(16, Math.min(ty + dy, 460 - player.h));
+    const box = { x, y, w: player.w, h: player.h };
+    let ok = true;
+    for (const s of sol) if (hit(box, s)) { ok = false; break; }
+    if (ok) return [x, y];
+  }
+  return [tx, ty];
+}
+function findFreeEndless(tx, ty) {
+  const sol = endlessSolids();
+  for (const [dx, dy] of OFFSETS) {
+    const x = Math.max(-1000, Math.min(tx + dx, 100000));
+    const y = Math.max(16, Math.min(ty + dy, 460 - player.h));
+    const box = { x, y, w: player.w, h: player.h };
+    let ok = true;
+    for (const s of sol) if (hit(box, s)) { ok = false; break; }
+    if (ok) return [x, y];
+  }
+  return [tx, ty];
 }
 
 function reassemble() {
   if (player.state !== 'SHATTERED' || !pieces.length) return;
-  const a = pieces[anchorIdx];
-  if (!a || a.dead) { anchorIdx = 0; return; }
+  const a = pieces.find(p => p.id === anchorId) || pieces[0];
   const acx = a.x + a.w/2, acy = a.y + a.h/2;
-  let tx = acx - a.ox - player.w/2;
-  let ty = acy - a.oy - player.h/2 - 2;
-  const sol = solids();
-  for (let iter = 0; iter < 3; iter++) {
-    for (let s of sol) {
-      if (hit({x:tx,y:ty,w:player.w,h:player.h}, s)) {
-        const oT = (ty+player.h)-s.y, oB = (s.y+s.h)-ty;
-        const oL = (tx+player.w)-s.x, oR = (s.x+s.w)-tx;
-        const m = Math.min(oT,oB,oL,oR);
-        if (m===oT) ty = s.y-player.h;
-        else if (m===oB) ty = s.y+s.h;
-        else if (m===oL) tx = s.x-player.w;
-        else tx = s.x+s.w;
-      }
-    }
-  }
-
-  // CLAMP reassembly do hratelné zóny — zabrání vypadnutí mimo mapu
-  tx = Math.max(16, Math.min(tx, 864 - player.w));
-  ty = Math.max(16, Math.min(ty, 390 - player.h));
-
+  const [tx, ty] = (screen === 'ENDLESS')
+    ? findFreeEndless(acx - a.ox - player.w/2, acy - a.oy - player.h/2 - 2)
+    : findFree(acx - a.ox - player.w/2, acy - a.oy - player.h/2 - 2);
   player.tx = tx; player.ty = ty;
   player.state = 'REASSEMBLING'; player.timer = 0;
   pieces.forEach(p => { p.sx = p.x; p.sy = p.y; });
@@ -423,18 +439,105 @@ function reassemble() {
 
 function activateMenuSelection(idx) {
   beep(360, 520, 0.1);
-  const items = getMenuItems();
-  const sel = items[idx];
-  if (sel === 'PLAY') loadLevel(lvlIdx);
+  const sel = getMenuItems()[idx];
+  if (sel === 'PLAY') loadLevel(nextUndone());
   else if (sel === 'LEVELS') openLevels();
+  else if (sel === 'ENDLESS (beta)') startEndless();
   else if (sel === 'CONTROLS') openControls();
   else if (sel === 'SPEEDRUN') openSpeedrunMenu();
+  else if (sel === 'CHEATS') openCheats();
+}
+
+function endlessSolids() {
+  const s = [];
+  for (const c of endless.chunks) for (const w of c.walls) s.push(w);
+  return s;
+}
+
+function makeEndlessChunk(idx, x) {
+  const diff = Math.min(4, Math.floor(idx / 4));
+  const walls = [];
+  const hazards = [];
+
+  if (idx < 2) {
+    walls.push(B(x, 390, 400, 70));
+    return { startX: x, width: 400, walls, hazards };
+  }
+
+  const types = ['flat', 'hurdles', 'gap', 'low_ceiling', 'spike_pit'];
+  let type;
+  const r = Math.random();
+  if (idx < 4) type = r < 0.55 ? 'flat' : 'hurdles';
+  else if (idx < 8) type = r < 0.2 ? 'flat' : r < 0.45 ? 'hurdles' : r < 0.7 ? 'gap' : 'low_ceiling';
+  else type = types[Math.floor(Math.random() * types.length)];
+
+  let width = 400;
+  switch (type) {
+    case 'flat':
+      width = 260 + Math.random() * 60;
+      walls.push(B(x, 390, width, 70));
+      break;
+    case 'hurdles': {
+      width = 380 + diff * 30;
+      walls.push(B(x, 390, width, 70));
+      const n = 2 + Math.min(2, diff);
+      const spacing = width / (n + 1);
+      for (let i = 0; i < n; i++) {
+        const sx = x + spacing * (i + 1) - 22;
+        hazards.push({ x: sx, y: 372, w: 44, h: 18 });
+      }
+      break;
+    }
+    case 'gap': {
+      const gw = 80 + diff * 15;
+      const leftW = 110;
+      const midW = 80;
+      const rightW = 100 + diff * 20;
+      width = leftW + gw + midW + gw + rightW;
+      walls.push(B(x, 390, leftW, 70));
+      walls.push(B(x + leftW + gw, 390, midW, 70));
+      walls.push(B(x + leftW + gw + midW + gw, 390, rightW, 70));
+      hazards.push(PIT(x + leftW, gw));
+      hazards.push(PIT(x + leftW + gw + midW, gw));
+      break;
+    }
+    case 'low_ceiling': {
+      width = 360 + diff * 30;
+      walls.push(B(x, 390, width, 70));
+      const ceilW = 160 + diff * 25;
+      walls.push(B(x + (width - ceilW) / 2, 0, ceilW, 340));
+      break;
+    }
+    case 'spike_pit': {
+      const pitW = 90 + diff * 20;
+      const leftW = 100 + Math.random() * 60;
+      const rightW = 100 + Math.random() * 60;
+      width = leftW + pitW + rightW;
+      walls.push(B(x, 390, leftW, 70));
+      walls.push(B(x + leftW + pitW, 390, rightW, 70));
+      hazards.push(PIT(x + leftW, pitW));
+      break;
+    }
+  }
+  return { startX: x, width, walls, hazards };
+}
+
+function endlessDie() {
+  endless.runTime = (performance.now() - endless.runStart) / 1000;
+  if (endless.distance > bestEndlessDistance) {
+    bestEndlessDistance = endless.distance;
+    endless.best = endless.distance;
+    saveProgress();
+  }
+  shakeAmount = 12;
+  beep(150, 60, 0.4);
+  screen = 'ENDLESS_DONE';
 }
 
 window.addEventListener('keydown', e => {
   if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
   if (e.code === 'Escape') {
-    if (screen === 'GAME' || screen === 'LEVELS' || screen === 'CONTROLS' || screen === 'SPEEDRUN_DONE' || screen === 'SPEEDRUN_MENU') {
+    if (screen !== 'MENU') {
       if (speedrunMode) speedrunMode = false;
       openMenu();
     }
@@ -451,6 +554,22 @@ window.addEventListener('keydown', e => {
   }
   if (screen === 'SPEEDRUN_MENU') {
     if (!keys[e.code] && (e.code==='Enter'||e.code==='Space')) startSpeedrun();
+    keys[e.code]=true; return;
+  }
+  if (screen === 'ENDLESS_DONE') {
+    if (!keys[e.code] && (e.code==='Enter'||e.code==='Space')) startEndless();
+    keys[e.code]=true; return;
+  }
+  if (screen === 'CHEATS') {
+    if (!keys[e.code]) {
+      if (e.code==='ArrowUp'||e.code==='KeyW') { cheatsIndex=(cheatsIndex+2)%3; beep(300,360,0.05,0.03); }
+      else if (e.code==='ArrowDown'||e.code==='KeyS') { cheatsIndex=(cheatsIndex+1)%3; beep(300,360,0.05,0.03); }
+      else if (e.code==='Enter'||e.code==='Space') {
+        if (cheatsIndex === 0) { cheatAirJump = !cheatAirJump; saveProgress(); beep(400, 620, 0.12); }
+        else if (cheatsIndex === 1) { cheatsHelpTimer = 3; beep(440, 580, 0.08); }
+        else if (cheatsIndex === 2) { openMenu(); }
+      }
+    }
     keys[e.code]=true; return;
   }
   if (screen === 'LEVELS') {
@@ -477,27 +596,32 @@ window.addEventListener('keydown', e => {
       if (player.state === 'ASSEMBLED') shatter();
       else if (player.state === 'SHATTERED') reassemble();
     }
-    if (e.code === 'KeyQ' && player.state === 'SHATTERED') {
-      for (let k = 0; k < pieces.length; k++) {
-        anchorIdx = (anchorIdx + 1) % pieces.length;
-        if (!pieces[anchorIdx].dead) break;
-      }
+    if (e.code === 'KeyQ' && player.state === 'SHATTERED' && pieces.length) {
+      const i = pieces.findIndex(p => p.id === anchorId);
+      anchorId = pieces[(i + 1) % pieces.length].id;
       beep(440, 520, 0.06, 0.04);
     }
-    if (e.code === 'KeyR') {
-      lvlDeaths++; totalDeaths++; resetPlayerToSpawn();
-      lvlStartTime = performance.now(); lvlTime = 0;
-      introFrames = INTRO_TOTAL;
-      saveProgress();
+    if (player.state === 'SHATTERED' && pieces.length) {
+      const by = f => pieces.reduce((a, p) => f(p) > f(a) ? p : a);
+      let pick = null;
+      if (e.code === 'KeyD' || e.code === 'ArrowRight') pick = by(p => p.x);
+      else if (e.code === 'KeyA' || e.code === 'ArrowLeft') pick = by(p => -p.x);
+      else if (e.code === 'KeyS' || e.code === 'ArrowDown') pick = by(p => p.y);
+      else if (e.code === 'KeyW' || e.code === 'ArrowUp' || e.code === 'Space') pick = by(p => -p.y);
+      if (pick) { anchorId = pick.id; beep(480, 580, 0.06, 0.04); }
     }
+    if (e.code === 'KeyR' && screen === 'GAME') restartLevel();
   }
   keys[e.code] = true;
 });
 window.addEventListener('keyup', e => keys[e.code] = false);
 
-canvas.addEventListener('mousemove', e => {
+function mousePos(e) {
   const r = canvas.getBoundingClientRect();
-  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  return { mx: (e.clientX - r.left) * W / r.width, my: (e.clientY - r.top) * H / r.height };
+}
+canvas.addEventListener('mousemove', e => {
+  const { mx, my } = mousePos(e);
   if (screen === 'MENU') {
     menuButtonsRects.forEach((b, i) => {
       if (mx>=b.x && mx<=b.x+b.w && my>=b.y && my<=b.y+b.h) menuIndex = i;
@@ -506,11 +630,14 @@ canvas.addEventListener('mousemove', e => {
     levelButtonsRects.forEach((b) => {
       if (mx>=b.x && mx<=b.x+b.w && my>=b.y && my<=b.y+b.h) levelHoverIdx = b.idx;
     });
+  } else if (screen === 'CHEATS') {
+    if (airJumpBtnRect && mx>=airJumpBtnRect.x && mx<=airJumpBtnRect.x+airJumpBtnRect.w && my>=airJumpBtnRect.y && my<=airJumpBtnRect.y+airJumpBtnRect.h) cheatsIndex = 0;
+    else if (helpBtnRect && mx>=helpBtnRect.x && mx<=helpBtnRect.x+helpBtnRect.w && my>=helpBtnRect.y && my<=helpBtnRect.y+helpBtnRect.h) cheatsIndex = 1;
+    else if (cheatsBackBtnRect && mx>=cheatsBackBtnRect.x && mx<=cheatsBackBtnRect.x+cheatsBackBtnRect.w && my>=cheatsBackBtnRect.y && my<=cheatsBackBtnRect.y+cheatsBackBtnRect.h) cheatsIndex = 2;
   }
 });
 canvas.addEventListener('mousedown', e => {
-  const r = canvas.getBoundingClientRect();
-  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  const { mx, my } = mousePos(e);
   if (screen === 'MENU') {
     menuButtonsRects.forEach((b, i) => {
       if (mx>=b.x && mx<=b.x+b.w && my>=b.y && my<=b.y+b.h) activateMenuSelection(i);
@@ -521,25 +648,38 @@ canvas.addEventListener('mousedown', e => {
     levelButtonsRects.forEach((b) => {
       if (mx>=b.x && mx<=b.x+b.w && my>=b.y && my<=b.y+b.h) { beep(360,520,0.1); loadLevel(b.idx); }
     });
-    if (backButtonRect && mx>=backButtonRect.x && mx<=backButtonRect.x+backButtonRect.w && my>=backButtonRect.y && my<=backButtonRect.y+backButtonRect.h) {
-      openMenu();
-    }
+    if (backButtonRect && mx>=backButtonRect.x && mx<=backButtonRect.x+backButtonRect.w && my>=backButtonRect.y && my<=backButtonRect.y+backButtonRect.h) openMenu();
     return;
   }
   if (screen === 'CONTROLS') { openMenu(); return; }
   if (screen === 'SPEEDRUN_MENU') { startSpeedrun(); return; }
   if (screen === 'SPEEDRUN_DONE') { openSpeedrunMenu(); return; }
+  if (screen === 'ENDLESS_DONE') { startEndless(); return; }
+  if (screen === 'CHEATS') {
+    if (airJumpBtnRect && mx>=airJumpBtnRect.x && mx<=airJumpBtnRect.x+airJumpBtnRect.w && my>=airJumpBtnRect.y && my<=airJumpBtnRect.y+airJumpBtnRect.h) {
+      cheatAirJump = !cheatAirJump; saveProgress(); beep(400, 620, 0.12); return;
+    }
+    if (helpBtnRect && mx>=helpBtnRect.x && mx<=helpBtnRect.x+helpBtnRect.w && my>=helpBtnRect.y && my<=helpBtnRect.y+helpBtnRect.h) {
+      cheatsHelpTimer = 3; beep(440, 580, 0.08); return;
+    }
+    if (cheatsBackBtnRect && mx>=cheatsBackBtnRect.x && mx<=cheatsBackBtnRect.x+cheatsBackBtnRect.w && my>=cheatsBackBtnRect.y && my<=cheatsBackBtnRect.y+cheatsBackBtnRect.h) {
+      openMenu(); return;
+    }
+    return;
+  }
   if (player.state !== 'SHATTERED') return;
-  let best=-1, minD=60;
-  pieces.forEach((p,i)=>{
-    if (p.dead) return;
-    const d=Math.hypot(p.x+p.w/2-mx,p.y+p.h/2-my);
-    if(d<minD){minD=d;best=i;}
+  let best = -1, minD = 70;
+  pieces.forEach(p => {
+    const d = Math.hypot(p.x + p.w/2 - mx, p.y + p.h/2 - my);
+    if (d < minD) { minD = d; best = p.id; }
   });
-  if (best!==-1) { anchorIdx=best; beep(480,580,0.06,0.04); }
+  if (best !== -1) { anchorId = best; beep(480,580,0.06,0.04); }
 });
 
 function updateGame() {
+  player.px = player.x; player.py = player.y;
+  pieces.forEach(p => { p.px = p.x; p.py = p.y; });
+
   if (introFrames > 0) introFrames--;
 
   if (completeFrames > 0) {
@@ -550,47 +690,41 @@ function updateGame() {
 
   lvlTime = (performance.now() - lvlStartTime) / 1000;
 
-  // Buttons
   lvl.buttons.forEach(b => {
+    let active = false;
+    if (player.state === 'ASSEMBLED' && hit(player, b)) active = true;
+    if (!active && player.state !== 'ASSEMBLED') {
+      for (let p of pieces) if (!p.dead && hit(p, b)) { active = true; break; }
+    }
     if (b.duration) {
       if (b.timer > 0) {
         b.timer--;
         if (b.timer === 0) b.pressed = false;
-      }
-      let active = false;
-      if (player.state === 'ASSEMBLED' && hit(player, b)) active = true;
-      if (player.state !== 'ASSEMBLED') {
-        for (let p of pieces) if (!p.dead && hit(p, b)) { active = true; break; }
       }
       if (active) {
         if (!b.pressed) beep(360, 520, 0.1, 0.05);
         b.pressed = true;
         b.timer = b.duration;
       }
-    } else {
-      if (b.pressed) return;
-      let active = false;
-      if (player.state === 'ASSEMBLED' && hit(player, b)) active = true;
-      if (player.state !== 'ASSEMBLED') {
-        for (let p of pieces) if (!p.dead && hit(p, b)) { active = true; break; }
-      }
-      if (active) { b.pressed = true; beep(360, 520, 0.1, 0.05); }
+    } else if (!b.pressed && active) {
+      b.pressed = true; beep(360, 520, 0.1, 0.05);
     }
   });
 
-  // Doors
   lvl.doors.forEach(d => {
     const b = lvl.buttons.find(btn => btn.id === d.id);
-    if (b && b.pressed) d.currY += (d.openY - d.currY) * 0.14;
-    else d.currY += (d.y - d.currY) * 0.14;
+    const target = (b && b.pressed) ? d.openY : d.y;
+    d.currY += (target - d.currY) * 0.14;
+    if (Math.abs(target - d.currY) < 0.3) d.currY = target;
   });
+
+  lvl.springs.forEach(s => { if (s.sq > 0) s.sq--; });
 
   player.scaleX += (1-player.scaleX)*0.18;
   player.scaleY += (1-player.scaleY)*0.18;
 
   if (player.state === 'ASSEMBLED') {
     const sol = solids();
-
     const left = keys['ArrowLeft'] || keys['KeyA'];
     const right = keys['ArrowRight'] || keys['KeyD'];
     const targetVx = left ? -player.speed : right ? player.speed : 0;
@@ -632,18 +766,24 @@ function updateGame() {
         }
       }
     }
-    (lvl.windZones || []).forEach(wz => {
-      if (hit(player, wz)) {
-        player.vx += wz.vx * 0.4;
-        player.vy += wz.vy * 0.4;
+
+    lvl.springs.forEach(s => {
+      if (player.vy >= 0 && hit(player, s)) {
+        player.vy = -s.power; player.grounded = false; player.coyote = 0;
+        player.scaleX = 0.78; player.scaleY = 1.28;
+        s.sq = 8;
+        beep(300, 720, 0.16, 0.06);
+        addDust(player.x + player.w/2, s.y, 6);
       }
     });
 
-    // Safety: vypadl jsem z mapy? Respawn
-    if (player.y > 460 || player.y < -100 || player.x < -50 || player.x > 930) {
-      die();
-      return;
-    }
+    let inWind = false;
+    lvl.windZones.forEach(wz => {
+      if (hit(player, wz)) { player.vx += wz.ax; player.vy += wz.ay; inWind = true; }
+    });
+    if (inWind && player.vy < -5.2) player.vy = -5.2;
+
+    if (player.y > 460 || player.y < -100 || player.x < -50 || player.x > 930) { die(); return; }
 
     for (let h of lvl.hazards) {
       if (hit(player, h)) { die(); return; }
@@ -653,7 +793,7 @@ function updateGame() {
       const isNew = !bestTimes[lvlIdx] || lvlTime < bestTimes[lvlIdx];
       done.add(lvlIdx);
       if (isNew) bestTimes[lvlIdx] = lvlTime;
-      if (!bestDeaths[lvlIdx] || lvlDeaths < bestDeaths[lvlIdx]) bestDeaths[lvlIdx] = lvlDeaths;
+      if (bestDeaths[lvlIdx] === undefined || lvlDeaths < bestDeaths[lvlIdx]) bestDeaths[lvlIdx] = lvlDeaths;
       saveProgress();
       beep(440, 660, 0.14);
       completeNewBest = isNew && !speedrunMode;
@@ -662,17 +802,16 @@ function updateGame() {
     }
   }
   else if (player.state === 'SHATTERED') {
-    // PRE-PASS: rozbíjení skla (prediktivní check)
-    (lvl.breakableWalls || []).forEach(w => {
+    lvl.breakableWalls.forEach(w => {
       if (w.broken) return;
       for (let p of pieces) {
         if (p.dead) continue;
-        const speed = Math.hypot(p.vx, p.vy);
-        if (speed > 2) {
+        if (Math.hypot(p.vx, p.vy) > 2) {
           const test = { x: p.x + p.vx, y: p.y + p.vy, w: p.w, h: p.h };
           if (hit(test, w)) {
             w.broken = true;
             addDust(w.x + w.w/2, w.y + w.h/2, 25);
+            shakeAmount = 6;
             beep(140, 60, 0.2);
             break;
           }
@@ -680,7 +819,6 @@ function updateGame() {
       }
     });
 
-    // Rebuild solids (broken walls excluded)
     const sol = solids();
 
     pieces.forEach(p => {
@@ -706,12 +844,11 @@ function updateGame() {
           }
         }
       }
-      (lvl.windZones || []).forEach(wz => {
-        if (hit(p, wz)) {
-          p.vx += wz.vx * 0.6;
-          p.vy += wz.vy * 0.6;
-        }
+      let inWind = false;
+      lvl.windZones.forEach(wz => {
+        if (hit(p, wz)) { p.vx += wz.ax; p.vy += wz.ay; inWind = true; }
       });
+      if (inWind && p.vy < -6) p.vy = -6;
       for (let h of lvl.hazards) {
         if (hit(p, h)) { p.dead = true; break; }
       }
@@ -720,7 +857,7 @@ function updateGame() {
     });
     pieces = pieces.filter(p => !p.dead);
     if (pieces.length === 0) { die(); return; }
-    if (!pieces[anchorIdx] || pieces[anchorIdx].dead) anchorIdx = 0;
+    if (!pieces.some(p => p.id === anchorId)) pickDefaultAnchor();
   }
   else if (player.state === 'REASSEMBLING') {
     player.timer += 0.09;
@@ -735,7 +872,8 @@ function updateGame() {
     });
     if (t >= 1) {
       player.x = player.tx; player.y = player.ty;
-      if (lvlIdx === 6 || lvlIdx === 7) player.vy = -4.5;
+      player.px = player.x; player.py = player.y;
+      if (cheatAirJump || lvlIdx === 6 || lvlIdx === 7) player.vy = -2.5;
       else player.vy = 0;
       player.vx = 0;
       player.scaleX = 0.95; player.scaleY = 1.05;
@@ -744,6 +882,169 @@ function updateGame() {
       addDust(player.x + player.w/2, player.y + player.h/2, 8);
       beep(320, 480, 0.12, 0.05);
     }
+  }
+
+  dust.forEach(d => { d.x += d.vx; d.y += d.vy; d.life -= 0.045; });
+  dust = dust.filter(d => d.life > 0);
+}
+
+function updateEndless() {
+  player.px = player.x; player.py = player.y;
+  pieces.forEach(p => { p.px = p.x; p.py = p.y; });
+
+  endless.runTime = (performance.now() - endless.runStart) / 1000;
+
+  while (endless.nextChunkX < endless.cameraX + W + 800) {
+    const chunk = makeEndlessChunk(endless.chunks.length, endless.nextChunkX);
+    endless.chunks.push(chunk);
+    endless.nextChunkX = chunk.startX + chunk.width;
+  }
+
+  endless.chunks = endless.chunks.filter(c => c.startX + c.width > endless.cameraX - 400);
+
+  player.scaleX += (1-player.scaleX)*0.18;
+  player.scaleY += (1-player.scaleY)*0.18;
+
+  if (player.state === 'ASSEMBLED') {
+    const sol = endlessSolids();
+
+    const left = keys['ArrowLeft'] || keys['KeyA'];
+    const right = keys['ArrowRight'] || keys['KeyD'];
+    const targetVx = left ? -ENDLESS_MOVE_SPEED : right ? ENDLESS_MOVE_SPEED : 0;
+    player.vx += (targetVx - player.vx) * 0.25;
+    if (Math.abs(player.vx) > 0.3) {
+      player.facing = player.vx > 0 ? 1 : -1;
+      if (player.grounded) player.walk += Math.abs(player.vx) * 0.06;
+    } else player.walk = 0;
+
+    if (player.grounded) player.coyote = 8;
+    else if (player.coyote > 0) player.coyote--;
+    if ((keys['Space']||keys['ArrowUp']||keys['KeyW']) && player.coyote > 0) {
+      player.vy = player.jump; player.grounded = false; player.coyote = 0;
+      player.scaleX = 0.82; player.scaleY = 1.22;
+      beep(240, 420, 0.1);
+      addDust(player.x + player.w/2, player.y + player.h, 5);
+    }
+    player.vy += GRAVITY;
+
+    player.x += player.vx;
+    for (let s of sol) {
+      if (hit(player, s)) {
+        if (player.vx > 0) player.x = s.x - player.w;
+        else if (player.vx < 0) player.x = s.x + s.w;
+        player.vx = 0;
+      }
+    }
+
+    const wasG = player.grounded;
+    player.y += player.vy;
+    player.grounded = false;
+    for (let s of sol) {
+      if (hit(player, s)) {
+        if (player.vy > 0) {
+          if (!wasG && player.vy > 3) {
+            player.scaleX = 1.2; player.scaleY = 0.82;
+            addDust(player.x+player.w/2, s.y, 4);
+          }
+          player.y = s.y - player.h; player.vy = 0; player.grounded = true;
+        } else if (player.vy < 0) {
+          player.y = s.y + s.h; player.vy = 0;
+        }
+      }
+    }
+
+    for (const c of endless.chunks) {
+      for (const h of c.hazards) {
+        if (hit(player, h)) { endlessDie(); return; }
+      }
+    }
+
+    if (player.y > 460) { endlessDie(); return; }
+
+    const curX = player.x + player.w;
+    const d = Math.floor(curX / 10);
+    if (d > endless.distance) endless.distance = d;
+  }
+  else if (player.state === 'SHATTERED') {
+    const sol = endlessSolids();
+
+    pieces.forEach(p => {
+      if (p.dead) return;
+      p.vy += GRAVITY;
+      p.x += p.vx;
+      for (let s of sol) {
+        if (hit(p, s)) {
+          if (p.vx > 0) p.x = s.x - p.w;
+          else if (p.vx < 0) p.x = s.x + s.w;
+          p.vx = -p.vx * 0.35;
+        }
+      }
+      p.y += p.vy;
+      for (let s of sol) {
+        if (hit(p, s)) {
+          if (p.vy > 0) {
+            p.y = s.y - p.h; p.vy = -p.vy * 0.22;
+            p.vx *= 0.91; p.vrot *= 0.6;
+            if (Math.abs(p.vy) < 0.5) p.vy = 0;
+          } else if (p.vy < 0) {
+            p.y = s.y + s.h; p.vy = 0;
+          }
+        }
+      }
+      for (const c of endless.chunks) {
+        for (const h of c.hazards) {
+          if (hit(p, h)) { p.dead = true; break; }
+        }
+        if (p.dead) break;
+      }
+      if (p.y > 500 || p.x < endless.cameraX - 100) p.dead = true;
+      p.rot += p.vrot;
+    });
+    pieces = pieces.filter(p => !p.dead);
+    if (pieces.length === 0) { endlessDie(); return; }
+    if (!pieces.some(p => p.id === anchorId)) pickDefaultAnchor();
+
+    const maxPX = Math.max(...pieces.map(p => p.x + p.w));
+    const d = Math.floor(maxPX / 10);
+    if (d > endless.distance) endless.distance = d;
+  }
+  else if (player.state === 'REASSEMBLING') {
+    player.timer += 0.09;
+    const t = Math.min(player.timer, 1);
+    const ease = 1 - Math.pow(1-t, 3);
+    pieces.forEach(p => {
+      const dx = player.tx + player.w/2 + p.ox - p.w/2;
+      const dy = player.ty + player.h/2 + p.oy - p.h/2;
+      p.x = p.sx + (dx - p.sx) * ease;
+      p.y = p.sy + (dy - p.sy) * ease;
+      p.rot *= (1-t);
+    });
+    if (t >= 1) {
+      player.x = player.tx; player.y = player.ty;
+      player.px = player.x; player.py = player.y;
+      player.vy = 0;
+      player.vx = 0;
+      player.scaleX = 0.95; player.scaleY = 1.05;
+      player.state = 'ASSEMBLED';
+      pieces = [];
+      addDust(player.x + player.w/2, player.y + player.h/2, 8);
+      beep(320, 480, 0.12, 0.05);
+    }
+  }
+
+  let playerMaxX;
+  if (player.state === 'SHATTERED' && pieces.length) {
+    playerMaxX = Math.max(...pieces.map(p => p.x + p.w));
+  } else {
+    playerMaxX = player.x + player.w;
+  }
+  const targetCamX = playerMaxX - 300;
+  if (targetCamX > endless.cameraX) {
+    endless.cameraX += Math.min(targetCamX - endless.cameraX, 25);
+  }
+
+  if (player.state === 'ASSEMBLED' && player.x < endless.cameraX - 200) {
+    endlessDie(); return;
   }
 
   dust.forEach(d => { d.x += d.vx; d.y += d.vy; d.life -= 0.045; });
@@ -784,27 +1085,107 @@ function drawPlayerSprite(cx, cy, walk, sx, sy, facing) {
   ctx.restore();
 }
 
+// ============= TUTORIAL LABELS =============
+function drawTutorialLabel(x, y, text, arrow, blink) {
+  const float = Math.sin(animFrame * 0.08) * 3;
+  const alpha = blink ? 0.75 + Math.sin(animFrame * 0.12) * 0.25 : 1;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = 'bold 13px ui-monospace, monospace';
+  const w = ctx.measureText(text).width + 24;
+  const h = 28;
+  const yy = y + float;
+
+  // Shadow
+  ctx.fillStyle = 'rgba(23,23,23,0.2)';
+  ctx.fillRect(x - w/2 + 2, yy - h/2 + 2, w, h);
+
+  // Box
+  ctx.fillStyle = 'rgba(23,23,23,0.92)';
+  ctx.fillRect(x - w/2, yy - h/2, w, h);
+
+  // Border
+  ctx.strokeStyle = PAPER;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x - w/2, yy - h/2, w, h);
+
+  // Text
+  ctx.fillStyle = PAPER;
+  ctx.textAlign = 'center';
+  ctx.fillText(text, x, yy + 5);
+
+  // Arrow
+  if (arrow) {
+    ctx.font = 'bold 22px ui-monospace, monospace';
+    ctx.fillStyle = 'rgba(23,23,23,0.92)';
+    ctx.fillText(arrow, x, yy + 32);
+  }
+
+  ctx.restore();
+}
+
+function drawTutorialLabels() {
+  if (!lvl.isTutorial) return;
+
+  const cx = player.x + player.w/2;
+  const maxPieceX = player.state === 'SHATTERED' && pieces.length
+    ? Math.max(...pieces.map(p => p.x + p.w/2))
+    : -Infinity;
+  const minPieceX = player.state === 'SHATTERED' && pieces.length
+    ? Math.min(...pieces.map(p => p.x + p.w/2))
+    : Infinity;
+
+  // 1. Move hint — always visible on the left
+  drawTutorialLabel(180, 300, '[A] / [D] to move', '→', false);
+
+  // 2. Split hint — visible while before the wall
+  const beforeWall = player.state === 'ASSEMBLED' ? cx < 500 : minPieceX < 500;
+  if (beforeWall) {
+    drawTutorialLabel(430, 240, 'Press [E] to split', '↓', true);
+  }
+
+  // 3. Anchor selection hint — visible while shattered
+  if (player.state === 'SHATTERED') {
+    drawTutorialLabel(440, 130, '[Q] / Click to pick anchor', '↓', false);
+  }
+
+  // 4. Reassemble hint — visible when pieces are past the wall
+  if (player.state === 'SHATTERED' && maxPieceX > 534) {
+    drawTutorialLabel(620, 240, 'Press [E] to reassemble', '↓', true);
+  }
+
+  // 5. Reached past wall — go to goal
+  if (player.state === 'ASSEMBLED' && cx > 550) {
+    drawTutorialLabel(700, 240, 'Walk to the goal', '→', false);
+  }
+}
+
 function drawMenu() {
   ctx.fillStyle = PAPER; ctx.fillRect(0,0,W,H);
   ctx.strokeStyle = INK; ctx.lineWidth = 4; ctx.strokeRect(16,16,W-32,H-32);
   ctx.fillStyle = INK; ctx.textAlign='center';
   ctx.font = 'bold 46px ui-monospace, monospace';
-  ctx.fillText('BOUNCE BACK', W/2, 100);
+  ctx.fillText('BOUNCE BACK', W/2, 90);
 
   if (done.size === LEVELS.length) {
     ctx.font = 'bold 13px ui-monospace, monospace';
     ctx.fillStyle = '#0a0';
-    ctx.fillText('ALL LEVELS CLEARED · SPEEDRUN UNLOCKED', W/2, 125);
+    ctx.fillText('ALL LEVELS CLEARED · SPEEDRUN + CHEATS UNLOCKED', W/2, 112);
     ctx.fillStyle = INK;
   }
 
-  const bounce = Math.abs(Math.sin(animFrame*0.05))*8;
-  drawPlayerSprite(W/2, 175-bounce, animFrame*0.08, 1, 1, 1);
-
   const items = getMenuItems();
+  const n = items.length;
+  const gap = n >= 5 ? 42 : 48;
+  const bh = n >= 5 ? 34 : 40;
+  const sy = n >= 5 ? 195 : 250;
+  const charY = n >= 5 ? 148 : 175;
+
+  const bounce = Math.abs(Math.sin(animFrame*0.05))*8;
+  drawPlayerSprite(W/2, charY-bounce, animFrame*0.08, 1, 1, 1);
+
   menuButtonsRects = [];
-  const bw=240, bh=40, gap=48;
-  const sy = 250;
+  const bw=240;
   items.forEach((label, i) => {
     const bx=W/2-bw/2, by=sy+i*gap;
     menuButtonsRects.push({x:bx,y:by,w:bw,h:bh});
@@ -814,7 +1195,7 @@ function drawMenu() {
     ctx.strokeStyle = INK; ctx.lineWidth = 2.5; ctx.strokeRect(bx,by,bw,bh);
     ctx.fillStyle = active ? PAPER : INK;
     ctx.font = 'bold 16px ui-monospace, monospace';
-    ctx.fillText(label, W/2, by+26);
+    ctx.fillText(label, W/2, by + bh/2 + 6);
     if (label === 'SPEEDRUN') {
       ctx.font = 'bold 9px ui-monospace, monospace';
       ctx.fillStyle = active ? PAPER : '#0a0';
@@ -822,12 +1203,30 @@ function drawMenu() {
       else ctx.fillText('NEW', W/2 + bw/2 - 20, by+12);
       ctx.fillStyle = active ? PAPER : INK;
     }
+    if (label === 'CHEATS') {
+      ctx.font = 'bold 9px ui-monospace, monospace';
+      ctx.fillStyle = active ? PAPER : '#a00';
+      ctx.fillText('!', W/2 + bw/2 - 15, by+12);
+      ctx.fillStyle = active ? PAPER : INK;
+    }
+    if (label === 'ENDLESS (beta)') {
+      ctx.font = 'bold 9px ui-monospace, monospace';
+      ctx.fillStyle = active ? PAPER : '#a00';
+      if (bestEndlessDistance > 0) ctx.fillText(`${bestEndlessDistance}m`, W/2 + bw/2 - 25, by+12);
+      else ctx.fillText('∞', W/2 + bw/2 - 15, by+12);
+      ctx.fillStyle = active ? PAPER : INK;
+    }
   });
 
   ctx.font = 'bold 11px ui-monospace, monospace';
   ctx.fillStyle = '#888';
-  ctx.fillText(`Total deaths: ${totalDeaths}`, W/2, H-30);
-  if (bestSpeedrun) ctx.fillText(`Best speedrun: ${formatTime(bestSpeedrun)}`, W/2, H-16);
+  ctx.fillText(`Cleared: ${done.size}/${LEVELS.length} · Total deaths: ${totalDeaths}`, W/2, H-30);
+  if (bestSpeedrun || bestEndlessDistance > 0) {
+    const parts = [];
+    if (bestSpeedrun) parts.push(`Speedrun: ${formatTime(bestSpeedrun)}`);
+    if (bestEndlessDistance > 0) parts.push(`Endless: ${bestEndlessDistance}m`);
+    ctx.fillText(parts.join(' · '), W/2, H-16);
+  }
   ctx.textAlign='left';
 }
 
@@ -840,7 +1239,7 @@ function drawLevelsScreen() {
 
   levelButtonsRects = [];
   const cols = 5;
-  const bw = 155, bh = 65, gap = 10;
+  const bw = 155, bh = 55, gap = 10;
   const totalW = cols * bw + (cols-1) * gap;
   const startX = (W - totalW) / 2;
   const startY = 90;
@@ -857,14 +1256,11 @@ function drawLevelsScreen() {
     ctx.strokeStyle = INK; ctx.lineWidth = 2.5;
     ctx.strokeRect(bx, by, bw, bh);
     ctx.fillStyle = isHover ? PAPER : INK;
-    ctx.font = 'bold 20px ui-monospace, monospace';
-    ctx.fillText(String(i+1).padStart(2,'0'), bx + bw/2, by + 25);
-    const name = level.name.split(' // ')[1] || '';
-    ctx.font = 'bold 9px ui-monospace, monospace';
-    ctx.fillText(name, bx + bw/2, by + 42);
+    ctx.font = 'bold 22px ui-monospace, monospace';
+    ctx.fillText(String(i+1).padStart(2,'0'), bx + bw/2, by + 32);
     if (isDone && bestTimes[i]) {
       ctx.font = 'bold 9px ui-monospace, monospace';
-      ctx.fillText(formatTime(bestTimes[i]), bx + bw/2, by + 56);
+      ctx.fillText(formatTime(bestTimes[i]), bx + bw/2, by + 46);
     }
   });
 
@@ -888,7 +1284,7 @@ function drawControlsScreen() {
     ['[A] / [D]', 'Move left / right'],
     ['[W] / [SPACE]', 'Jump'],
     ['[E]', 'Break into pieces / Reassemble'],
-    ['[Q] / Click', 'Select anchor piece'],
+    ['[WASD] / [Q] / Click', 'Pick the piece to reassemble at'],
     ['[R]', 'Restart level'],
     ['[ESC]', 'Back to menu']
   ];
@@ -903,6 +1299,94 @@ function drawControlsScreen() {
   ctx.fillStyle = PAPER; ctx.textAlign='center';
   ctx.font='bold 15px ui-monospace, monospace';
   ctx.fillText('BACK TO MENU', W/2, H-41);
+  ctx.textAlign='left';
+}
+
+function drawCheatsScreen() {
+  ctx.fillStyle = PAPER; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle = INK; ctx.lineWidth = 4; ctx.strokeRect(16,16,W-32,H-32);
+  ctx.fillStyle = INK; ctx.textAlign='center';
+  ctx.font = 'bold 40px ui-monospace, monospace';
+  ctx.fillText('CHEATS', W/2, 80);
+  ctx.font = 'bold 11px ui-monospace, monospace';
+  ctx.fillStyle = '#888';
+  ctx.fillText('Experimental features', W/2, 105);
+  ctx.fillStyle = INK;
+
+  const bw = 260, bh = 60;
+  const bx = W/2 - bw/2 - 30;
+  const by = 180;
+  airJumpBtnRect = {x:bx, y:by, w:bw, h:bh};
+
+  ctx.fillStyle = cheatAirJump ? INK : PAPER;
+  ctx.fillRect(bx, by, bw, bh);
+  ctx.strokeStyle = INK; ctx.lineWidth = 2.5;
+  ctx.strokeRect(bx, by, bw, bh);
+  if (cheatsIndex === 0) {
+    ctx.strokeStyle = INK; ctx.lineWidth = 4;
+    ctx.strokeRect(bx-4, by-4, bw+8, bh+8);
+  }
+
+  ctx.fillStyle = cheatAirJump ? PAPER : INK;
+  ctx.font = 'bold 18px ui-monospace, monospace';
+  ctx.fillText('AIR JUMP', bx + bw/2, by + 26);
+  ctx.font = 'bold 12px ui-monospace, monospace';
+  ctx.fillText(cheatAirJump ? '● ON' : '○ OFF', bx + bw/2, by + 46);
+
+  const hbw = 44, hbh = 44;
+  const hbx = bx + bw + 16;
+  const hby = by + (bh - hbh) / 2;
+  helpBtnRect = {x:hbx, y:hby, w:hbw, h:hbh};
+
+  ctx.fillStyle = cheatsIndex === 1 ? INK : PAPER;
+  ctx.fillRect(hbx, hby, hbw, hbh);
+  ctx.strokeStyle = INK; ctx.lineWidth = 2.5;
+  ctx.strokeRect(hbx, hby, hbw, hbh);
+  ctx.fillStyle = cheatsIndex === 1 ? PAPER : INK;
+  ctx.font = 'bold 26px ui-monospace, monospace';
+  ctx.fillText('?', hbx + hbw/2, hby + hbh/2 + 8);
+
+  if (cheatsHelpTimer > 0) {
+    const alpha = Math.min(1, cheatsHelpTimer);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = INK;
+    ctx.beginPath();
+    ctx.moveTo(hbx + hbw/2 - 8, hby + hbh + 8);
+    ctx.lineTo(hbx + hbw/2 + 8, hby + hbh + 8);
+    ctx.lineTo(hbx + hbw/2, hby + hbh - 4);
+    ctx.fill();
+    const tw = 300, th = 60;
+    const tx = hbx + hbw/2 - tw/2;
+    const ty = hby + hbh + 12;
+    ctx.fillStyle = INK;
+    ctx.fillRect(tx, ty, tw, th);
+    ctx.fillStyle = PAPER;
+    ctx.font = 'bold 14px ui-monospace, monospace';
+    ctx.fillText('try pressing e', hbx + hbw/2, ty + 24);
+    ctx.font = 'bold 11px ui-monospace, monospace';
+    ctx.fillText('(first version of splitting)', hbx + hbw/2, ty + 44);
+    ctx.restore();
+  }
+
+  ctx.fillStyle = '#888';
+  ctx.font = 'bold 11px ui-monospace, monospace';
+  ctx.fillText('Small bounce after reassembly, in every level', W/2, 280);
+
+  const bbx = W/2-100, bby = H - 65, bbw = 200, bbh = 38;
+  cheatsBackBtnRect = {x:bbx, y:bby, w:bbw, h:bbh};
+  ctx.fillStyle = cheatsIndex === 2 ? INK : PAPER;
+  ctx.fillRect(bbx, bby, bbw, bbh);
+  ctx.strokeStyle = INK; ctx.lineWidth = 2.5;
+  ctx.strokeRect(bbx, bby, bbw, bbh);
+  if (cheatsIndex === 2) {
+    ctx.strokeStyle = INK; ctx.lineWidth = 4;
+    ctx.strokeRect(bbx-4, bby-4, bbw+8, bbh+8);
+  }
+  ctx.fillStyle = cheatsIndex === 2 ? PAPER : INK;
+  ctx.font = 'bold 15px ui-monospace, monospace';
+  ctx.fillText('BACK', W/2, bby + 24);
+
   ctx.textAlign='left';
 }
 
@@ -968,7 +1452,50 @@ function drawSpeedrunDone() {
   ctx.textAlign='left';
 }
 
-function drawGame() {
+function drawEndlessDone() {
+  ctx.fillStyle = PAPER; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle = INK; ctx.lineWidth = 4; ctx.strokeRect(16,16,W-32,H-32);
+  ctx.fillStyle = INK; ctx.textAlign='center';
+  ctx.font = 'bold 44px ui-monospace, monospace';
+  ctx.fillText('RUN OVER', W/2, 110);
+
+  const isNew = endless.distance >= bestEndlessDistance && endless.distance > 0;
+  ctx.font = 'bold 14px ui-monospace, monospace';
+  ctx.fillStyle = '#888';
+  ctx.fillText('DISTANCE', W/2, 165);
+  ctx.fillStyle = INK;
+  ctx.font = 'bold 56px ui-monospace, monospace';
+  ctx.fillText(`${endless.distance}m`, W/2, 220);
+
+  if (isNew) {
+    ctx.font = 'bold 22px ui-monospace, monospace';
+    ctx.fillStyle = '#0a0';
+    ctx.fillText('★ NEW RECORD ★', W/2, 258);
+    ctx.fillStyle = INK;
+  } else {
+    ctx.font = 'bold 14px ui-monospace, monospace';
+    ctx.fillStyle = '#666';
+    ctx.fillText(`Best: ${bestEndlessDistance}m`, W/2, 258);
+    ctx.fillStyle = INK;
+  }
+
+  ctx.font = 'bold 14px ui-monospace, monospace';
+  ctx.fillStyle = '#888';
+  ctx.fillText(`Time: ${formatTime(endless.runTime)}`, W/2, 300);
+
+  ctx.fillStyle = INK;
+  ctx.font = 'bold 16px ui-monospace, monospace';
+  ctx.fillText('[ENTER] Try again', W/2, H-70);
+  ctx.font = 'bold 11px ui-monospace, monospace';
+  ctx.fillStyle = '#888';
+  ctx.fillText('[ESC] Back to menu', W/2, H-48);
+  ctx.textAlign='left';
+}
+
+function drawGame(alpha) {
+  const ix = o => o.px === undefined ? o.x : o.px + (o.x - o.px) * alpha;
+  const iy = o => o.py === undefined ? o.y : o.py + (o.y - o.py) * alpha;
+
   ctx.save();
   if (shakeAmount > 0.5) {
     ctx.translate((Math.random()-0.5) * shakeAmount, (Math.random()-0.5) * shakeAmount);
@@ -982,10 +1509,46 @@ function drawGame() {
   ctx.setLineDash([]);
   ctx.fillStyle = INK; ctx.fillRect(g.x+g.w/2-3, g.y+g.h/2-3, 6, 6);
 
+  lvl.windZones.forEach(wz => {
+    ctx.fillStyle = 'rgba(23,23,23,0.06)';
+    ctx.fillRect(wz.x, wz.y, wz.w, wz.h);
+    ctx.strokeStyle = 'rgba(23,23,23,0.2)';
+    ctx.fillStyle = 'rgba(23,23,23,0.28)';
+    ctx.lineWidth = 2;
+    const mag = Math.hypot(wz.ax, wz.ay) || 1;
+    const ux = wz.ax / mag, uy = wz.ay / mag;
+    const len = 26;
+    const phase = (animFrame * 1.2) % 60;
+    for (let gy = wz.y + 40; gy < wz.y + wz.h - 20; gy += 70) {
+      for (let gx = wz.x + 40; gx < wz.x + wz.w - 20; gx += 90) {
+        let cx = gx + ux * (phase - 30) * 0.7;
+        let cy = gy + uy * (phase - 30) * 0.7;
+        ctx.beginPath();
+        ctx.moveTo(cx - ux*len/2, cy - uy*len/2);
+        ctx.lineTo(cx + ux*len/2, cy + uy*len/2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(cx + ux*len/2, cy + uy*len/2, 2.2, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+  });
+
+  lvl.doors.forEach(d => {
+    ctx.fillStyle = PAPER;
+    ctx.fillRect(d.x, d.currY, d.w, d.h);
+    ctx.strokeStyle = INK; ctx.lineWidth = 2.5;
+    ctx.strokeRect(d.x, d.currY, d.w, d.h);
+    ctx.beginPath();
+    ctx.moveTo(d.x, d.currY);
+    ctx.lineTo(d.x+d.w, d.currY+d.h);
+    ctx.stroke();
+  });
+
   ctx.fillStyle = INK;
   lvl.walls.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
 
-  (lvl.breakableWalls || []).forEach(w => {
+  lvl.breakableWalls.forEach(w => {
     if (w.broken) return;
     ctx.fillStyle = '#555';
     ctx.fillRect(w.x, w.y, w.w, w.h);
@@ -996,32 +1559,6 @@ function drawGame() {
       ctx.lineTo(w.x + w.w - 4, yy + 6);
     }
     ctx.stroke();
-  });
-
-  (lvl.windZones || []).forEach(wz => {
-    ctx.fillStyle = 'rgba(23,23,23,0.06)';
-    ctx.fillRect(wz.x, wz.y, wz.w, wz.h);
-    ctx.strokeStyle = 'rgba(23,23,23,0.18)';
-    ctx.lineWidth = 2;
-    const cx = wz.x + wz.w/2, cy = wz.y + wz.h/2;
-    const len = 25;
-    const mag = Math.hypot(wz.vx, wz.vy) || 1;
-    const dx = (wz.vx / mag) * len;
-    const dy = (wz.vy / mag) * len;
-    for (let oy = -60; oy <= 60; oy += 60) {
-      for (let ox = -80; ox <= 80; ox += 80) {
-        if (cx+ox < wz.x+20 || cx+ox > wz.x+wz.w-20) continue;
-        if (cy+oy < wz.y+20 || cy+oy > wz.y+wz.h-20) continue;
-        ctx.beginPath();
-        ctx.moveTo(cx+ox-dx/2, cy+oy-dy/2);
-        ctx.lineTo(cx+ox+dx/2, cy+oy+dy/2);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(cx+ox+dx/2, cy+oy+dy/2, 2, 0, Math.PI*2);
-        ctx.fillStyle = 'rgba(23,23,23,0.25)';
-        ctx.fill();
-      }
-    }
   });
 
   lvl.buttons.forEach(b => {
@@ -1041,48 +1578,55 @@ function drawGame() {
     }
   });
 
-  lvl.doors.forEach(d => {
-    ctx.fillStyle = PAPER;
-    ctx.fillRect(d.x, d.currY, d.w, d.h);
-    ctx.strokeStyle = INK; ctx.lineWidth = 2.5;
-    ctx.strokeRect(d.x, d.currY, d.w, d.h);
+  lvl.springs.forEach(s => {
+    const comp = ((s.sq || 0) / 8) * 5;
+    const top = s.y + comp;
+    const base = s.y + s.h;
+    ctx.fillStyle = INK;
+    ctx.fillRect(s.x, top, s.w, 4);
+    ctx.fillRect(s.x, base - 2, s.w, 2);
+    ctx.strokeStyle = INK; ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(d.x, d.currY);
-    ctx.lineTo(d.x+d.w, d.currY+d.h);
+    const segs = 8, x0 = s.x + 6, x1 = s.x + s.w - 6;
+    ctx.moveTo(x0, base - 2);
+    for (let k = 1; k <= segs; k++) {
+      const x = x0 + (x1 - x0) * k / segs;
+      ctx.lineTo(x, k % 2 ? top + 4 : base - 2);
+    }
     ctx.stroke();
   });
 
   ctx.fillStyle = INK;
   lvl.hazards.forEach(h => {
     for (let x = h.x; x < h.x+h.w; x += 14) {
+      const x2 = Math.min(x + 14, h.x + h.w);
       ctx.beginPath();
       ctx.moveTo(x, h.y+h.h);
-      ctx.lineTo(x+7, h.y);
-      ctx.lineTo(x+14, h.y+h.h);
+      ctx.lineTo((x + x2) / 2, h.y);
+      ctx.lineTo(x2, h.y+h.h);
       ctx.fill();
     }
   });
 
   if (player.state === 'ASSEMBLED') {
-    drawPlayerSprite(player.x+player.w/2, player.y+player.h/2, player.walk, player.scaleX, player.scaleY, player.facing);
+    drawPlayerSprite(ix(player)+player.w/2, iy(player)+player.h/2, player.walk, player.scaleX, player.scaleY, player.facing);
   } else {
-    const a = pieces[anchorIdx];
-    if (a && !a.dead) {
-      const ax = a.x+a.w/2, ay = a.y+a.h/2;
+    const a = pieces.find(p => p.id === anchorId);
+    if (a) {
+      const ax = ix(a)+a.w/2, ay = iy(a)+a.h/2;
       ctx.strokeStyle = 'rgba(23,23,23,0.25)'; ctx.lineWidth = 1.5;
       ctx.setLineDash([3,4]);
-      pieces.forEach((p,i) => {
-        if (i===anchorIdx || p.dead) return;
-        ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(p.x+p.w/2, p.y+p.h/2); ctx.stroke();
+      pieces.forEach(p => {
+        if (p.id === anchorId) return;
+        ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(ix(p)+p.w/2, iy(p)+p.h/2); ctx.stroke();
       });
       ctx.setLineDash([]);
     }
-    pieces.forEach((p,i) => {
-      if (p.dead) return;
+    pieces.forEach(p => {
       ctx.save();
-      ctx.translate(p.x+p.w/2, p.y+p.h/2);
+      ctx.translate(ix(p)+p.w/2, iy(p)+p.h/2);
       ctx.rotate(p.rot);
-      if (i === anchorIdx) {
+      if (p.id === anchorId) {
         ctx.fillStyle = PAPER;
         ctx.fillRect(-p.w/2, -p.h/2, p.w, p.h);
         ctx.strokeStyle = INK; ctx.lineWidth = 2.5;
@@ -1101,56 +1645,78 @@ function drawGame() {
 
   ctx.fillStyle = INK;
   dust.forEach(d => {
-    ctx.globalAlpha = d.life * 0.6;
+    ctx.globalAlpha = Math.max(0, d.life) * 0.6;
     ctx.fillRect(d.x-d.s/2, d.y-d.s/2, d.s, d.s);
   });
   ctx.globalAlpha = 1;
 
   ctx.restore();
 
-  // HUD
+  // TUTORIAL LABELS — drawn on top of everything in-world
+  drawTutorialLabels();
+
   ctx.fillStyle = INK;
   ctx.textAlign = 'left';
-  ctx.font = 'bold 12px ui-monospace, monospace';
-  ctx.fillText(lvl.name, 20, 28);
+  ctx.font = 'bold 14px ui-monospace, monospace';
+  ctx.fillText('LEVEL ' + lvl.name, 24, 36);
   ctx.font = '11px ui-monospace, monospace';
-  ctx.fillStyle = '#666';
-  ctx.fillText(`Deaths: ${lvlDeaths}`, 20, 44);
+  ctx.fillStyle = '#888';
+  ctx.fillText(`Deaths: ${lvlDeaths}`, 24, 52);
 
   ctx.textAlign = 'right';
   if (speedrunMode) {
     ctx.fillStyle = '#a00';
     ctx.font = 'bold 22px ui-monospace, monospace';
-    ctx.fillText(formatTime(speedrunElapsed), W-20, 30);
+    ctx.fillText(formatTime(speedrunElapsed), W-24, 38);
     ctx.font = 'bold 10px ui-monospace, monospace';
-    ctx.fillText(`L${lvlIdx+1}/${LEVELS.length} · D${lvlDeaths}`, W-20, 46);
+    ctx.fillText(`L${lvlIdx+1}/${LEVELS.length} · D${lvlDeaths}`, W-24, 54);
   } else {
     ctx.fillStyle = INK;
     ctx.font = 'bold 18px ui-monospace, monospace';
-    ctx.fillText(formatTime(lvlTime), W-20, 30);
+    ctx.fillText(formatTime(lvlTime), W-24, 38);
   }
   ctx.textAlign = 'left';
 
-  if (introFrames > 0) {
-    const p = 1 - introFrames / introTotal;
-    const alpha = p < 0.15 ? p/0.15 : (p > 0.75 ? (1-p)/0.25 : 1);
+  if (player.state === 'SHATTERED' && !lvl.isTutorial) {
+    ctx.fillStyle = '#888';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 11px ui-monospace, monospace';
+    ctx.fillText('[E] reassemble at the white piece · [WASD] / [Q] / click = pick another', W/2, H-26);
+    ctx.textAlign = 'left';
+  }
+
+  // Hide the standard intro overlay text for the tutorial, since we have floating labels
+  if (introFrames > 0 && !lvl.isTutorial) {
+    const p = 1 - introFrames / INTRO_TOTAL;
+    const a = p < 0.15 ? p/0.15 : (p > 0.75 ? (1-p)/0.25 : 1);
     ctx.save();
-    ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    ctx.globalAlpha = Math.max(0, Math.min(1, a));
     ctx.fillStyle = INK;
     ctx.textAlign = 'center';
-    ctx.font = 'bold 20px ui-monospace, monospace';
-    ctx.fillText(lvl.name, W/2, 55);
-    ctx.font = '11px ui-monospace, monospace';
-    ctx.fillStyle = '#888';
-    ctx.fillText(lvl.hint, W/2, 75);
+    ctx.font = 'bold 24px ui-monospace, monospace';
+    ctx.fillText('LEVEL ' + lvl.name, W/2, 70);
+    ctx.font = '12px ui-monospace, monospace';
+    ctx.fillStyle = '#666';
+    ctx.fillText(lvl.hint, W/2, 92);
+    ctx.restore();
+  } else if (introFrames > 0 && lvl.isTutorial) {
+    // Just the level name for the tutorial
+    const p = 1 - introFrames / INTRO_TOTAL;
+    const a = p < 0.15 ? p/0.15 : (p > 0.75 ? (1-p)/0.25 : 1);
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, a));
+    ctx.fillStyle = INK;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 24px ui-monospace, monospace';
+    ctx.fillText('LEVEL ' + lvl.name, W/2, 70);
     ctx.restore();
   }
 
   if (completeFrames > 0) {
     const p = 1 - completeFrames / COMPLETE_TOTAL;
-    const alpha = p < 0.25 ? p/0.25 : (p > 0.75 ? (1-p)/0.25 : 1);
+    const a = p < 0.25 ? p/0.25 : (p > 0.75 ? (1-p)/0.25 : 1);
     ctx.save();
-    ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    ctx.globalAlpha = Math.max(0, Math.min(1, a));
     ctx.fillStyle = INK;
     ctx.textAlign = 'center';
     ctx.font = 'bold 26px ui-monospace, monospace';
@@ -1169,29 +1735,154 @@ function drawGame() {
   }
 }
 
+function drawEndless(alpha) {
+  const ix = o => o.px === undefined ? o.x : o.px + (o.x - o.px) * alpha;
+  const iy = o => o.py === undefined ? o.y : o.py + (o.y - o.py) * alpha;
+
+  ctx.save();
+  if (shakeAmount > 0.5) {
+    ctx.translate((Math.random()-0.5) * shakeAmount, (Math.random()-0.5) * shakeAmount);
+  }
+
+  ctx.fillStyle = PAPER; ctx.fillRect(-20,-20,W+40,H+40);
+
+  ctx.save();
+  ctx.translate(-endless.cameraX, 0);
+
+  ctx.strokeStyle = 'rgba(23,23,23,0.05)';
+  ctx.lineWidth = 1;
+  const gx0 = Math.floor(endless.cameraX / 60) * 60;
+  for (let gx = gx0; gx < endless.cameraX + W; gx += 60) {
+    ctx.beginPath();
+    ctx.moveTo(gx, 0);
+    ctx.lineTo(gx, H);
+    ctx.stroke();
+  }
+
+  for (const c of endless.chunks) {
+    if (c.startX + c.width < endless.cameraX - 100) continue;
+    if (c.startX > endless.cameraX + W + 100) continue;
+
+    ctx.fillStyle = INK;
+    c.walls.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
+
+    c.hazards.forEach(h => {
+      for (let x = h.x; x < h.x+h.w; x += 14) {
+        const x2 = Math.min(x + 14, h.x + h.w);
+        ctx.beginPath();
+        ctx.moveTo(x, h.y+h.h);
+        ctx.lineTo((x + x2) / 2, h.y);
+        ctx.lineTo(x2, h.y+h.h);
+        ctx.fill();
+      }
+    });
+  }
+
+  if (player.state === 'ASSEMBLED') {
+    drawPlayerSprite(ix(player)+player.w/2, iy(player)+player.h/2, player.walk, player.scaleX, player.scaleY, player.facing);
+  } else {
+    const a = pieces.find(p => p.id === anchorId);
+    if (a) {
+      const ax = ix(a)+a.w/2, ay = iy(a)+a.h/2;
+      ctx.strokeStyle = 'rgba(23,23,23,0.25)'; ctx.lineWidth = 1.5;
+      ctx.setLineDash([3,4]);
+      pieces.forEach(p => {
+        if (p.id === anchorId) return;
+        ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(ix(p)+p.w/2, iy(p)+p.h/2); ctx.stroke();
+      });
+      ctx.setLineDash([]);
+    }
+    pieces.forEach(p => {
+      ctx.save();
+      ctx.translate(ix(p)+p.w/2, iy(p)+p.h/2);
+      ctx.rotate(p.rot);
+      if (p.id === anchorId) {
+        ctx.fillStyle = PAPER;
+        ctx.fillRect(-p.w/2, -p.h/2, p.w, p.h);
+        ctx.strokeStyle = INK; ctx.lineWidth = 2.5;
+        ctx.strokeRect(-p.w/2, -p.h/2, p.w, p.h);
+        ctx.fillStyle = INK;
+        if (p.head) { ctx.fillRect(-4,-2,2.5,4); ctx.fillRect(2,-2,2.5,4); }
+        else ctx.fillRect(-2.5,-2.5,5,5);
+      } else {
+        ctx.fillStyle = INK;
+        ctx.fillRect(-p.w/2, -p.h/2, p.w, p.h);
+        if (p.head) drawEyes(player.facing);
+      }
+      ctx.restore();
+    });
+  }
+
+  ctx.fillStyle = INK;
+  dust.forEach(d => {
+    ctx.globalAlpha = Math.max(0, d.life) * 0.6;
+    ctx.fillRect(d.x-d.s/2, d.y-d.s/2, d.s, d.s);
+  });
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+  ctx.restore();
+
+  ctx.fillStyle = INK;
+  ctx.textAlign = 'left';
+  ctx.font = 'bold 16px ui-monospace, monospace';
+  ctx.fillText('ENDLESS (beta)', 24, 36);
+  ctx.font = 'bold 22px ui-monospace, monospace';
+  ctx.fillText(`${endless.distance}m`, 24, 62);
+
+  ctx.textAlign = 'right';
+  ctx.font = 'bold 18px ui-monospace, monospace';
+  ctx.fillText(formatTime(endless.runTime), W-24, 36);
+  ctx.font = 'bold 11px ui-monospace, monospace';
+  ctx.fillStyle = '#888';
+  ctx.fillText(`Best: ${Math.max(bestEndlessDistance, endless.distance)}m`, W-24, 54);
+  ctx.textAlign = 'left';
+
+  if (player.state === 'SHATTERED') {
+    ctx.fillStyle = '#888';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 11px ui-monospace, monospace';
+    ctx.fillText('[E] reassemble · [WASD] / [Q] / click = pick another', W/2, H-26);
+    ctx.textAlign = 'left';
+  }
+}
+
 function loop() {
   const now = performance.now();
   const dt = lastFrameNow ? Math.min(now - lastFrameNow, 100) : 0;
   lastFrameNow = now;
 
-  animFrame++;
+  animFrame += dt / 16.67;
 
-  if (speedrunMode && screen === 'GAME') {
-    speedrunElapsed += dt / 1000;
-  }
+  if (cheatsHelpTimer > 0) cheatsHelpTimer -= dt / 1000;
+  if (cheatsHelpTimer < 0) cheatsHelpTimer = 0;
+
+  if (speedrunMode && screen === 'GAME') speedrunElapsed += dt / 1000;
 
   if (screen === 'MENU') drawMenu();
   else if (screen === 'LEVELS') drawLevelsScreen();
   else if (screen === 'CONTROLS') drawControlsScreen();
+  else if (screen === 'CHEATS') drawCheatsScreen();
   else if (screen === 'SPEEDRUN_MENU') drawSpeedrunMenu();
   else if (screen === 'SPEEDRUN_DONE') drawSpeedrunDone();
-  else {
-    physAccum += SLOW_FACTOR;
-    while (physAccum >= 1) {
-      updateGame();
-      physAccum -= 1;
+  else if (screen === 'ENDLESS_DONE') drawEndlessDone();
+  else if (screen === 'ENDLESS') {
+    acc += dt;
+    if (acc > STEP * 5) acc = STEP * 5;
+    while (acc >= STEP && screen === 'ENDLESS') {
+      updateEndless();
+      acc -= STEP;
     }
-    drawGame();
+    if (screen === 'ENDLESS') drawEndless(Math.max(0, Math.min(1, acc / STEP)));
+  }
+  else if (screen === 'GAME') {
+    acc += dt;
+    if (acc > STEP * 5) acc = STEP * 5;
+    while (acc >= STEP && screen === 'GAME') {
+      updateGame();
+      acc -= STEP;
+    }
+    if (screen === 'GAME') drawGame(Math.max(0, Math.min(1, acc / STEP)));
   }
 
   if (shakeAmount > 0.5) shakeAmount *= 0.88;
