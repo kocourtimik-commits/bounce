@@ -26,20 +26,16 @@ const INK = '#171717';
 const PAPER = '#f5f4f0';
 const W = 880, H = 460;
 
-// ============================================================
-//  TVÉ KLÍČE Z FOSSBOARD
-// ============================================================
 const FOSSBOARD_PUBLIC_KEY = 'pub-ec45a5da98b39d75c934';
 const FOSSBOARD_PRIVATE_KEY = 'priv-905fb7a117f8c8703336';
 const FOSSBOARD_API_URL = 'https://fossboard.justneki.deno.net';
-// ============================================================
 
 const STEP = 1000 / 39;
 const ENDLESS_MOVE_SPEED = 5.0;
 
 let gameSpeed = 1.0;
 const SPEEDS = [0.25, 0.5, 1.0, 1.5, 2.0, 3.0];
-const SPEEDRUN_SPEED = 1.5; // Pevná rychlost pro speedrun
+const SPEEDRUN_SPEED = 1.5; 
 let speedBtnRect = null;
 
 let lostParts = new Set();
@@ -187,7 +183,7 @@ let speedrunAttempts = 0;
 let cheatAirJump = false;
 let bestEndlessDistance = 0;
 
-// ============= LEADERBOARD (SERVER-SIDE) =============
+
 let speedrunLeaderboard = []; 
 let isLeaderboardLoading = false;
 let lastSubmitStatus = '';
@@ -335,8 +331,7 @@ function openMenu() {
   menuIndex = 0; 
   cheatsHelpTimer = 0; 
   lostParts.clear();
-  if (!speedrunMode) gameSpeed = 1.0; // Reset rychlosti
-}
+  if (!speedrunMode) gameSpeed = 1.0;
 function openLevels() { screen = 'LEVELS'; levelHoverIdx = nextUndone(); }
 function openControls() { screen = 'CONTROLS'; }
 function openSpeedrunMenu() { 
@@ -347,7 +342,7 @@ function openCheats() { screen = 'CHEATS'; cheatsIndex = 0; cheatsHelpTimer = 0;
 
 function startSpeedrun() {
   speedrunMode = true;
-  gameSpeed = SPEEDRUN_SPEED; // Vynutí 1.5x rychlost
+  gameSpeed = SPEEDRUN_SPEED; 
   speedrunElapsed = 0;
   speedrunAttempts++;
   saveProgress();
@@ -378,7 +373,7 @@ function loadLevel(i) {
       speedrunTotalTime = speedrunElapsed;
       if (!bestSpeedrun || speedrunTotalTime < bestSpeedrun) bestSpeedrun = speedrunTotalTime;
       speedrunMode = false;
-      gameSpeed = 1.0; // Reset po speedrunu
+      gameSpeed = 1.0;
       screen = 'SPEEDRUN_DONE';
       playerNameInput = localStorage.getItem('splitted_lastname') || '';
       saveProgress();
@@ -670,7 +665,7 @@ window.addEventListener('keydown', e => {
         submitScoreToServer(playerNameInput, speedrunTotalTime);
         playerNameInput = playerNameInput || 'Anonymous';
         localStorage.setItem('splitted_lastname', playerNameInput);
-        screen = 'SPEEDRUN_MENU'; // Zpět do menu (kde je leaderboard)
+        screen = 'SPEEDRUN_MENU'; 
         lastSubmitStatus = 'submitting';
         gameSpeed = 1.0;
       }
@@ -801,7 +796,7 @@ canvas.addEventListener('mousedown', e => {
   }
   if (screen === 'GAME' || screen === 'ENDLESS') {
     if (speedBtnRect && mx >= speedBtnRect.x && mx <= speedBtnRect.x + speedBtnRect.w && my >= speedBtnRect.y && my <= speedBtnRect.y + speedBtnRect.h) {
-      if (speedrunMode) return; // Zablokováno ve speedrunu
+      if (speedrunMode) return;
       let idx = SPEEDS.indexOf(gameSpeed);
       if (idx === -1) idx = 2;
       idx = (idx + 1) % SPEEDS.length;
@@ -1577,7 +1572,6 @@ function drawSpeedrunMenu() {
   ctx.font = 'bold 32px ui-monospace, monospace';
   ctx.fillText('SPEEDRUN', W/2, 40);
 
-  // === TOP 10 LEADERBOARD ===
   ctx.font = 'bold 12px ui-monospace, monospace';
   ctx.fillStyle = '#888';
   ctx.fillText('TOP 10 WORLDWIDE', W/2, 70);
@@ -1614,7 +1608,6 @@ function drawSpeedrunMenu() {
     });
   }
 
-  // === PLAY BUTTON ===
   const btnW = 260, btnH = 38, btnX = W/2 - btnW/2, btnY = 340;
   ctx.fillStyle = INK;
   ctx.fillRect(btnX, btnY, btnW, btnH);
@@ -1622,8 +1615,6 @@ function drawSpeedrunMenu() {
   ctx.font = 'bold 16px ui-monospace, monospace';
   ctx.textAlign='center';
   ctx.fillText('▶ START SPEEDRUN', W/2, btnY + 25);
-
-  // === INFO ===
   ctx.font = 'bold 11px ui-monospace, monospace';
   ctx.fillStyle = '#a00';
   ctx.fillText('Locks speed to 1.5x', W/2, 388);
@@ -1923,7 +1914,6 @@ function drawGame(alpha) {
     ctx.fillText(`${gameSpeed.toFixed(2).replace(/\.?0+$/, '')}x`, speedBtnRect.x + speedBtnRect.w/2, speedBtnRect.y + 13);
     ctx.textAlign = 'left';
   } else {
-    // Ve speedrunu ukážeme jen fixní rychlost
     ctx.font = 'bold 11px ui-monospace, monospace';
     ctx.fillStyle = '#a00';
     ctx.fillText('LOCKED: 1.5x', 100, 36);
