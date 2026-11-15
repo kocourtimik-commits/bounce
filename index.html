@@ -29,6 +29,12 @@ const W = 880, H = 460;
 const STEP = 1000 / 39;
 const ENDLESS_MOVE_SPEED = 5.0;
 
+let gameSpeed = 1.0;
+const SPEEDS = [0.25, 0.5, 1.0, 1.5, 2.0, 3.0];
+let speedBtnRect = null;
+
+let lostParts = new Set();
+
 let actx = null;
 function beep(f1, f2, dur = 0.12, vol = 0.05) {
   try {
@@ -174,14 +180,14 @@ let bestEndlessDistance = 0;
 
 function saveProgress() {
   try {
-    localStorage.setItem('bounceback_v20', JSON.stringify({
+    localStorage.setItem('bounceback_v22', JSON.stringify({
       done: [...done], bestTimes, bestDeaths, totalDeaths, bestSpeedrun, speedrunAttempts, cheatAirJump, bestEndlessDistance
     }));
   } catch(e) {}
 }
 function loadProgress() {
   try {
-    const raw = localStorage.getItem('bounceback_v20') || localStorage.getItem('bounceback_v19') || localStorage.getItem('bounceback_v18');
+    const raw = localStorage.getItem('bounceback_v22') || localStorage.getItem('bounceback_v21') || localStorage.getItem('bounceback_v20');
     if (!raw) return;
     const d = JSON.parse(raw);
     if (d.done) done = new Set([...d.done].filter(i => i < LEVELS.length));
@@ -201,7 +207,6 @@ const endless = {
   nextChunkX: 100,
   cameraX: -150,
   distance: 0,
-  runStart: 0,
   runTime: 0,
   best: bestEndlessDistance
 };
@@ -221,7 +226,6 @@ let airJumpBtnRect = null;
 let helpBtnRect = null;
 let cheatsBackBtnRect = null;
 
-let lvlStartTime = 0;
 let lvlTime = 0;
 let lvlDeaths = 0;
 let introFrames = 0;
@@ -264,7 +268,7 @@ function nextUndone() {
   return 0;
 }
 
-function openMenu() { screen = 'MENU'; menuIndex = 0; cheatsHelpTimer = 0; }
+function openMenu() { screen = 'MENU'; menuIndex = 0; cheatsHelpTimer = 0; lostParts.clear(); }
 function openLevels() { screen = 'LEVELS'; levelHoverIdx = nextUndone(); }
 function openControls() { screen = 'CONTROLS'; }
 function openSpeedrunMenu() { screen = 'SPEEDRUN_MENU'; }
@@ -284,8 +288,8 @@ function startEndless() {
   endless.nextChunkX = 100;
   endless.cameraX = -150;
   endless.distance = 0;
-  endless.runStart = performance.now();
   endless.runTime = 0;
+  lostParts.clear();
   Object.assign(player, {
     x: 150, y: 336, px: 150, py: 336,
     vx: 0, vy: 0, grounded: false, coyote: 0,
@@ -312,17 +316,18 @@ function loadLevel(i) {
   screen = 'GAME';
   lvlIdx = i;
   lvl = JSON.parse(JSON.stringify(LEVELS[i]));
+  lostParts.clear();
   resetPlayerToSpawn();
   introFrames = INTRO_TOTAL;
   completeFrames = 0;
   completeNewBest = false;
   lvlTime = 0;
   lvlDeaths = 0;
-  lvlStartTime = performance.now();
   shakeAmount = 0;
   acc = 0;
 }
 function resetPlayerToSpawn() {
+  lostParts.clear();
   Object.assign(player, {
     x: lvl.spawn.x, y: lvl.spawn.y, px: lvl.spawn.x, py: lvl.spawn.y,
     vx: 0, vy: 0, grounded: false, coyote: 0, state: 'ASSEMBLED', scaleX: 1, scaleY: 1
@@ -342,8 +347,9 @@ function die() {
 }
 function restartLevel() {
   lvl = JSON.parse(JSON.stringify(LEVELS[lvlIdx]));
+  lostParts.clear();
   resetPlayerToSpawn();
-  lvlStartTime = performance.now(); lvlTime = 0;
+  lvlTime = 0;
   introFrames = INTRO_TOTAL;
 }
 
@@ -363,6 +369,28 @@ function addDust(x, y, n = 6) {
   }
 }
 
+function pushOutOfSolids(p, sol) {
+  // Push a piece out of any overlapping solids via shortest overlap
+  for (let iter = 0; iter < 4; iter++) {
+    let moved = false;
+    for (let s of sol) {
+      if (hit(p, s)) {
+        const oT = (p.y + p.h) - s.y;
+        const oB = (s.y + s.h) - p.y;
+        const oL = (p.x + p.w) - s.x;
+        const oR = (s.x + s.w) - p.x;
+        const m = Math.min(oT, oB, oL, oR);
+        if (m === oT) { p.y = s.y - p.h; if (p.vy > 0) p.vy = 0; }
+        else if (m === oB) { p.y = s.y + s.h; if (p.vy < 0) p.vy = 0; }
+        else if (m === oL) { p.x = s.x - p.w; if (p.vx > 0) p.vx = 0; }
+        else { p.x = s.x + s.w; if (p.vx < 0) p.vx = 0; }
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+}
+
 function pickDefaultAnchor() {
   if (!pieces.length) return;
   let best = pieces[0];
@@ -378,16 +406,22 @@ function shatter() {
   const boostVx = (screen === 'ENDLESS')
     ? Math.max(0, player.vx * 1.2) + player.facing * 5.5
     : (player.vx * 1.5 + player.facing * 2.5);
-  pieces = PARTS.map((p, i) => {
+  pieces = [];
+  PARTS.forEach((p, i) => {
+    if (lostParts.has(i)) return;
     const x = cx + p.ox - p.w/2, y = cy + p.oy - p.h/2;
-    return {
+    pieces.push({
       id: i, x, y, px: x, py: y,
       w: p.w, h: p.h, ox: p.ox, oy: p.oy, head: !!p.head,
       vx: boostVx + p.ox*0.14 + (Math.random()-0.5)*0.8,
       vy: player.vy*0.85 + p.oy*0.04 - 1.2,
-      rot: 0, vrot: (Math.random()-0.5)*0.1, dead: false
-    };
+      rot: 0, vrot: (Math.random()-0.5)*0.1,
+      dead: false, deathCause: null
+    });
   });
+  // Fix spawn overlaps so pieces don't get pushed sideways and fall through
+  const spawnSol = (screen === 'ENDLESS') ? endlessSolids() : solids();
+  pieces.forEach(p => pushOutOfSolids(p, spawnSol));
   pickDefaultAnchor();
   addDust(cx, cy, 10);
 }
@@ -523,7 +557,6 @@ function makeEndlessChunk(idx, x) {
 }
 
 function endlessDie() {
-  endless.runTime = (performance.now() - endless.runStart) / 1000;
   if (endless.distance > bestEndlessDistance) {
     bestEndlessDistance = endless.distance;
     endless.best = endless.distance;
@@ -667,6 +700,16 @@ canvas.addEventListener('mousedown', e => {
     }
     return;
   }
+  if (screen === 'GAME' || screen === 'ENDLESS') {
+    if (speedBtnRect && mx >= speedBtnRect.x && mx <= speedBtnRect.x + speedBtnRect.w && my >= speedBtnRect.y && my <= speedBtnRect.y + speedBtnRect.h) {
+      let idx = SPEEDS.indexOf(gameSpeed);
+      if (idx === -1) idx = 2;
+      idx = (idx + 1) % SPEEDS.length;
+      gameSpeed = SPEEDS[idx];
+      beep(400, 600, 0.05);
+      return;
+    }
+  }
   if (player.state !== 'SHATTERED') return;
   let best = -1, minD = 70;
   pieces.forEach(p => {
@@ -688,7 +731,7 @@ function updateGame() {
     return;
   }
 
-  lvlTime = (performance.now() - lvlStartTime) / 1000;
+  lvlTime += STEP / 1000;
 
   lvl.buttons.forEach(b => {
     let active = false;
@@ -723,24 +766,48 @@ function updateGame() {
   player.scaleX += (1-player.scaleX)*0.18;
   player.scaleY += (1-player.scaleY)*0.18;
 
+  const hasLegL = !lostParts.has(5);
+  const hasLegR = !lostParts.has(6);
+  const bothLegsGone = !hasLegL && !hasLegR;
+  const oneLegOnly = hasLegL !== hasLegR;
+
   if (player.state === 'ASSEMBLED') {
     const sol = solids();
     const left = keys['ArrowLeft'] || keys['KeyA'];
     const right = keys['ArrowRight'] || keys['KeyD'];
-    const targetVx = left ? -player.speed : right ? player.speed : 0;
+
+    let effSpeed = player.speed;
+    let effJump = player.jump;
+    if (oneLegOnly) {
+      effSpeed *= 0.65;
+      effJump *= 0.85;
+    } else if (bothLegsGone) {
+      effSpeed *= 0.5;
+    }
+
+    const targetVx = left ? -effSpeed : right ? effSpeed : 0;
     player.vx += (targetVx - player.vx) * 0.25;
     if (Math.abs(player.vx) > 0.3) {
       player.facing = player.vx > 0 ? 1 : -1;
       if (player.grounded) player.walk += Math.abs(player.vx) * 0.06;
     } else player.walk = 0;
+
     if (player.grounded) player.coyote = 8;
     else if (player.coyote > 0) player.coyote--;
+
     if ((keys['Space']||keys['ArrowUp']||keys['KeyW']) && player.coyote > 0) {
-      player.vy = player.jump; player.grounded = false; player.coyote = 0;
+      player.vy = effJump; player.grounded = false; player.coyote = 0;
       player.scaleX = 0.82; player.scaleY = 1.22;
       beep(240, 420, 0.1);
       addDust(player.x + player.w/2, player.y + player.h, 5);
     }
+    else if (bothLegsGone && player.grounded) {
+      player.vy = -5;
+      player.grounded = false;
+      player.scaleX = 0.9; player.scaleY = 1.15;
+      beep(180, 320, 0.08, 0.03);
+    }
+
     player.vy += GRAVITY;
     player.x += player.vx;
     for (let s of sol) {
@@ -789,7 +856,6 @@ function updateGame() {
       if (hit(player, h)) { die(); return; }
     }
     if (hit(player, lvl.goal)) {
-      lvlTime = (performance.now() - lvlStartTime) / 1000;
       const isNew = !bestTimes[lvlIdx] || lvlTime < bestTimes[lvlIdx];
       done.add(lvlIdx);
       if (isNew) bestTimes[lvlIdx] = lvlTime;
@@ -850,11 +916,17 @@ function updateGame() {
       });
       if (inWind && p.vy < -6) p.vy = -6;
       for (let h of lvl.hazards) {
-        if (hit(p, h)) { p.dead = true; break; }
+        if (hit(p, h)) { p.dead = true; p.deathCause = 'hazard'; break; }
       }
-      if (p.y > 500 || p.x < -50 || p.x > 930) p.dead = true;
+      if (p.y > 500 || p.x < -50 || p.x > 930) {
+        p.dead = true;
+        if (!p.deathCause) p.deathCause = 'oob';
+      }
       p.rot += p.vrot;
     });
+    // Only pieces killed by actual hazards are permanently lost.
+    // Out-of-bounds from spawn quirks does NOT lose them permanently.
+    pieces.forEach(p => { if (p.dead && p.deathCause === 'hazard') lostParts.add(p.id); });
     pieces = pieces.filter(p => !p.dead);
     if (pieces.length === 0) { die(); return; }
     if (!pieces.some(p => p.id === anchorId)) pickDefaultAnchor();
@@ -892,7 +964,7 @@ function updateEndless() {
   player.px = player.x; player.py = player.y;
   pieces.forEach(p => { p.px = p.x; p.py = p.y; });
 
-  endless.runTime = (performance.now() - endless.runStart) / 1000;
+  endless.runTime += STEP / 1000;
 
   while (endless.nextChunkX < endless.cameraX + W + 800) {
     const chunk = makeEndlessChunk(endless.chunks.length, endless.nextChunkX);
@@ -905,12 +977,21 @@ function updateEndless() {
   player.scaleX += (1-player.scaleX)*0.18;
   player.scaleY += (1-player.scaleY)*0.18;
 
+  const hasLegL = !lostParts.has(5);
+  const hasLegR = !lostParts.has(6);
+  const bothLegsGone = !hasLegL && !hasLegR;
+  const oneLegOnly = hasLegL !== hasLegR;
+
   if (player.state === 'ASSEMBLED') {
     const sol = endlessSolids();
-
     const left = keys['ArrowLeft'] || keys['KeyA'];
     const right = keys['ArrowRight'] || keys['KeyD'];
-    const targetVx = left ? -ENDLESS_MOVE_SPEED : right ? ENDLESS_MOVE_SPEED : 0;
+
+    let effSpeed = ENDLESS_MOVE_SPEED;
+    if (oneLegOnly) effSpeed *= 0.65;
+    else if (bothLegsGone) effSpeed *= 0.5;
+
+    const targetVx = left ? -effSpeed : right ? effSpeed : 0;
     player.vx += (targetVx - player.vx) * 0.25;
     if (Math.abs(player.vx) > 0.3) {
       player.facing = player.vx > 0 ? 1 : -1;
@@ -924,6 +1005,12 @@ function updateEndless() {
       player.scaleX = 0.82; player.scaleY = 1.22;
       beep(240, 420, 0.1);
       addDust(player.x + player.w/2, player.y + player.h, 5);
+    }
+    else if (bothLegsGone && player.grounded) {
+      player.vy = -5;
+      player.grounded = false;
+      player.scaleX = 0.9; player.scaleY = 1.15;
+      beep(180, 320, 0.08, 0.03);
     }
     player.vy += GRAVITY;
 
@@ -993,13 +1080,17 @@ function updateEndless() {
       }
       for (const c of endless.chunks) {
         for (const h of c.hazards) {
-          if (hit(p, h)) { p.dead = true; break; }
+          if (hit(p, h)) { p.dead = true; p.deathCause = 'hazard'; break; }
         }
         if (p.dead) break;
       }
-      if (p.y > 500 || p.x < endless.cameraX - 100) p.dead = true;
+      if (p.y > 500 || p.x < endless.cameraX - 100) {
+        p.dead = true;
+        if (!p.deathCause) p.deathCause = 'oob';
+      }
       p.rot += p.vrot;
     });
+    pieces.forEach(p => { if (p.dead && p.deathCause === 'hazard') lostParts.add(p.id); });
     pieces = pieces.filter(p => !p.dead);
     if (pieces.length === 0) { endlessDie(); return; }
     if (!pieces.some(p => p.id === anchorId)) pickDefaultAnchor();
@@ -1064,11 +1155,12 @@ function drawEyes(facing) {
   ctx.fillRect(-4+ex, -2, 2.5, 4);
   ctx.fillRect(2+ex, -2, 2.5, 4);
 }
-function drawPlayerSprite(cx, cy, walk, sx, sy, facing) {
+function drawPlayerSprite(cx, cy, walk, sx, sy, facing, ignoreLost = false) {
   const swing = Math.sin(walk) * 3.5;
   ctx.save();
   ctx.translate(cx, cy+27); ctx.scale(sx, sy); ctx.translate(0, -27);
-  PARTS.forEach(p => {
+  PARTS.forEach((p, idx) => {
+    if (!ignoreLost && lostParts.has(idx)) return;
     let ay = 0;
     if (p.limb==='legL') ay = swing;
     if (p.limb==='legR') ay = -swing;
@@ -1085,7 +1177,6 @@ function drawPlayerSprite(cx, cy, walk, sx, sy, facing) {
   ctx.restore();
 }
 
-// ============= TUTORIAL LABELS =============
 function drawTutorialLabel(x, y, text, arrow, blink) {
   const float = Math.sin(animFrame * 0.08) * 3;
   const alpha = blink ? 0.75 + Math.sin(animFrame * 0.12) * 0.25 : 1;
@@ -1096,25 +1187,20 @@ function drawTutorialLabel(x, y, text, arrow, blink) {
   const h = 28;
   const yy = y + float;
 
-  // Shadow
   ctx.fillStyle = 'rgba(23,23,23,0.2)';
   ctx.fillRect(x - w/2 + 2, yy - h/2 + 2, w, h);
 
-  // Box
   ctx.fillStyle = 'rgba(23,23,23,0.92)';
   ctx.fillRect(x - w/2, yy - h/2, w, h);
 
-  // Border
   ctx.strokeStyle = PAPER;
   ctx.lineWidth = 1.5;
   ctx.strokeRect(x - w/2, yy - h/2, w, h);
 
-  // Text
   ctx.fillStyle = PAPER;
   ctx.textAlign = 'center';
   ctx.fillText(text, x, yy + 5);
 
-  // Arrow
   if (arrow) {
     ctx.font = 'bold 22px ui-monospace, monospace';
     ctx.fillStyle = 'rgba(23,23,23,0.92)';
@@ -1135,26 +1221,21 @@ function drawTutorialLabels() {
     ? Math.min(...pieces.map(p => p.x + p.w/2))
     : Infinity;
 
-  // 1. Move hint — always visible on the left
   drawTutorialLabel(180, 300, '[A] / [D] to move', '→', false);
 
-  // 2. Split hint — visible while before the wall
   const beforeWall = player.state === 'ASSEMBLED' ? cx < 500 : minPieceX < 500;
   if (beforeWall) {
     drawTutorialLabel(430, 240, 'Press [E] to split', '↓', true);
   }
 
-  // 3. Anchor selection hint — visible while shattered
   if (player.state === 'SHATTERED') {
     drawTutorialLabel(440, 130, '[Q] / Click to pick anchor', '↓', false);
   }
 
-  // 4. Reassemble hint — visible when pieces are past the wall
   if (player.state === 'SHATTERED' && maxPieceX > 534) {
     drawTutorialLabel(620, 240, 'Press [E] to reassemble', '↓', true);
   }
 
-  // 5. Reached past wall — go to goal
   if (player.state === 'ASSEMBLED' && cx > 550) {
     drawTutorialLabel(700, 240, 'Walk to the goal', '→', false);
   }
@@ -1182,7 +1263,7 @@ function drawMenu() {
   const charY = n >= 5 ? 148 : 175;
 
   const bounce = Math.abs(Math.sin(animFrame*0.05))*8;
-  drawPlayerSprite(W/2, charY-bounce, animFrame*0.08, 1, 1, 1);
+  drawPlayerSprite(W/2, charY-bounce, animFrame*0.08, 1, 1, 1, true);
 
   menuButtonsRects = [];
   const bw=240;
@@ -1401,7 +1482,7 @@ function drawSpeedrunMenu() {
   ctx.fillText(`All ${LEVELS.length} levels. One timer.`, W/2, 128);
 
   const bounce = Math.abs(Math.sin(animFrame*0.06))*6;
-  drawPlayerSprite(W/2, 180-bounce, animFrame*0.09, 0.9, 0.9, 1);
+  drawPlayerSprite(W/2, 180-bounce, animFrame*0.09, 0.9, 0.9, 1, true);
 
   ctx.fillStyle = '#888';
   ctx.font = 'bold 12px ui-monospace, monospace';
@@ -1652,16 +1733,41 @@ function drawGame(alpha) {
 
   ctx.restore();
 
-  // TUTORIAL LABELS — drawn on top of everything in-world
   drawTutorialLabels();
 
   ctx.fillStyle = INK;
   ctx.textAlign = 'left';
   ctx.font = 'bold 14px ui-monospace, monospace';
   ctx.fillText('LEVEL ' + lvl.name, 24, 36);
+
+  // Speed UI
+  speedBtnRect = { x: 100, y: 22, w: 70, h: 18 };
+  ctx.fillStyle = gameSpeed === 1.0 ? 'rgba(23,23,23,0.1)' : 'rgba(23,23,23,0.3)';
+  ctx.fillRect(speedBtnRect.x, speedBtnRect.y, speedBtnRect.w, speedBtnRect.h);
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(speedBtnRect.x, speedBtnRect.y, speedBtnRect.w, speedBtnRect.h);
+  ctx.fillStyle = INK;
+  ctx.font = 'bold 11px ui-monospace, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(`${gameSpeed.toFixed(2).replace(/\.?0+$/, '')}x`, speedBtnRect.x + speedBtnRect.w/2, speedBtnRect.y + 13);
+  ctx.textAlign = 'left';
+
   ctx.font = '11px ui-monospace, monospace';
   ctx.fillStyle = '#888';
   ctx.fillText(`Deaths: ${lvlDeaths}`, 24, 52);
+
+  // Amputee indicator
+  if (lostParts.size > 0) {
+    const missing = [];
+    if (lostParts.has(3)) missing.push('L-ARM');
+    if (lostParts.has(4)) missing.push('R-ARM');
+    if (lostParts.has(5)) missing.push('L-LEG');
+    if (lostParts.has(6)) missing.push('R-LEG');
+    ctx.fillStyle = '#a00';
+    ctx.font = 'bold 10px ui-monospace, monospace';
+    ctx.fillText(missing.join(' '), 24, 66);
+  }
 
   ctx.textAlign = 'right';
   if (speedrunMode) {
@@ -1685,7 +1791,6 @@ function drawGame(alpha) {
     ctx.textAlign = 'left';
   }
 
-  // Hide the standard intro overlay text for the tutorial, since we have floating labels
   if (introFrames > 0 && !lvl.isTutorial) {
     const p = 1 - introFrames / INTRO_TOTAL;
     const a = p < 0.15 ? p/0.15 : (p > 0.75 ? (1-p)/0.25 : 1);
@@ -1700,7 +1805,6 @@ function drawGame(alpha) {
     ctx.fillText(lvl.hint, W/2, 92);
     ctx.restore();
   } else if (introFrames > 0 && lvl.isTutorial) {
-    // Just the level name for the tutorial
     const p = 1 - introFrames / INTRO_TOTAL;
     const a = p < 0.15 ? p/0.15 : (p > 0.75 ? (1-p)/0.25 : 1);
     ctx.save();
@@ -1827,8 +1931,33 @@ function drawEndless(alpha) {
   ctx.textAlign = 'left';
   ctx.font = 'bold 16px ui-monospace, monospace';
   ctx.fillText('ENDLESS (beta)', 24, 36);
+
+  // Speed UI
+  speedBtnRect = { x: 175, y: 22, w: 70, h: 18 };
+  ctx.fillStyle = gameSpeed === 1.0 ? 'rgba(23,23,23,0.1)' : 'rgba(23,23,23,0.3)';
+  ctx.fillRect(speedBtnRect.x, speedBtnRect.y, speedBtnRect.w, speedBtnRect.h);
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(speedBtnRect.x, speedBtnRect.y, speedBtnRect.w, speedBtnRect.h);
+  ctx.fillStyle = INK;
+  ctx.font = 'bold 11px ui-monospace, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(`${gameSpeed.toFixed(2).replace(/\.?0+$/, '')}x`, speedBtnRect.x + speedBtnRect.w/2, speedBtnRect.y + 13);
+  ctx.textAlign = 'left';
+
   ctx.font = 'bold 22px ui-monospace, monospace';
   ctx.fillText(`${endless.distance}m`, 24, 62);
+
+  if (lostParts.size > 0) {
+    const missing = [];
+    if (lostParts.has(3)) missing.push('L-ARM');
+    if (lostParts.has(4)) missing.push('R-ARM');
+    if (lostParts.has(5)) missing.push('L-LEG');
+    if (lostParts.has(6)) missing.push('R-LEG');
+    ctx.fillStyle = '#a00';
+    ctx.font = 'bold 10px ui-monospace, monospace';
+    ctx.fillText(missing.join(' '), 24, 78);
+  }
 
   ctx.textAlign = 'right';
   ctx.font = 'bold 18px ui-monospace, monospace';
@@ -1849,12 +1978,14 @@ function drawEndless(alpha) {
 
 function loop() {
   const now = performance.now();
-  const dt = lastFrameNow ? Math.min(now - lastFrameNow, 100) : 0;
+  const rawDt = lastFrameNow ? Math.min(now - lastFrameNow, 100) : 0;
   lastFrameNow = now;
+
+  const dt = rawDt * gameSpeed;
 
   animFrame += dt / 16.67;
 
-  if (cheatsHelpTimer > 0) cheatsHelpTimer -= dt / 1000;
+  if (cheatsHelpTimer > 0) cheatsHelpTimer -= rawDt / 1000;
   if (cheatsHelpTimer < 0) cheatsHelpTimer = 0;
 
   if (speedrunMode && screen === 'GAME') speedrunElapsed += dt / 1000;
