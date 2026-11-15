@@ -6,114 +6,38 @@
 <style>
   * { box-sizing: border-box; user-select: none; margin: 0; padding: 0; }
   body {
-    background: #171717;
-    color: #f5f4f0;
+    background: #171717; color: #f5f4f0;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 100vh;
-    overflow: hidden;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 100vh; overflow: hidden;
   }
-  .bar {
-    width: 880px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 10px 4px;
-    font-size: 13px;
-    letter-spacing: 0.5px;
-    min-height: 46px;
-  }
-  .dots { display: flex; gap: 6px; }
-  .dot {
-    width: 24px;
-    height: 24px;
-    border: 2px solid #f5f4f0;
-    background: transparent;
-    color: #f5f4f0;
-    font-family: inherit;
-    font-weight: bold;
-    font-size: 11px;
-    cursor: pointer;
-    transition: transform 0.12s ease, background 0.12s ease;
-  }
-  .dot:hover { transform: translateY(-2px); }
-  .dot.active { background: #f5f4f0; color: #171717; }
-  .dot.done { opacity: 0.5; }
-  .menu-btn {
-    border: 2px solid #f5f4f0;
-    background: transparent;
-    color: #f5f4f0;
-    font-family: inherit;
-    font-weight: bold;
-    font-size: 11px;
-    padding: 4px 10px;
-    cursor: pointer;
-  }
-  .menu-btn:hover { background: #f5f4f0; color: #171717; }
-  canvas {
-    background: #f5f4f0;
-    display: block;
-    cursor: pointer;
-  }
-  .controls {
-    width: 880px;
-    display: flex;
-    justify-content: space-between;
-    padding: 10px 4px;
-    font-size: 12px;
-    opacity: 0.75;
-    min-height: 36px;
-  }
+  canvas { background: #f5f4f0; display: block; cursor: pointer; }
 </style>
 </head>
 <body>
-
-<div class="bar" id="topBar">
-  <div style="display:flex; align-items:center; gap:12px;">
-    <button class="menu-btn" id="btnToMenu" style="display:none;">MENU</button>
-    <span id="lvlName" style="font-weight:bold;">BOUNCE BACK</span>
-  </div>
-  <div class="dots" id="dots"></div>
-  <div id="hint"></div>
-</div>
-
 <canvas id="c" width="880" height="460"></canvas>
-
-<div class="controls" id="bottomBar">
-  <div>[A / D] pohyb  ·  [W / MEZERNÍK] skok  ·  [E] rozpad / složit  ·  [Q / KLIK] kotva</div>
-  <div>[R] restart  ·  [ESC] menu</div>
-</div>
-
 <script>
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
-const lvlNameEl = document.getElementById('lvlName');
-const hintEl = document.getElementById('hint');
-const dotsEl = document.getElementById('dots');
-const btnToMenu = document.getElementById('btnToMenu');
-
 const INK = '#171717';
 const PAPER = '#f5f4f0';
 
 let actx = null;
 function beep(f1, f2, dur = 0.12, vol = 0.05) {
-  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
-  if (actx.state === 'suspended') actx.resume();
-  const o = actx.createOscillator();
-  const g = actx.createGain();
-  o.type = 'sine';
-  o.frequency.setValueAtTime(f1, actx.currentTime);
-  if (f2) o.frequency.exponentialRampToValueAtTime(f2, actx.currentTime + dur);
-  g.gain.setValueAtTime(vol, actx.currentTime);
-  g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + dur);
-  o.connect(g); g.connect(actx.destination);
-  o.start(); o.stop(actx.currentTime + dur);
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume();
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(f1, actx.currentTime);
+    if (f2) o.frequency.exponentialRampToValueAtTime(Math.max(f2, 1), actx.currentTime + dur);
+    g.gain.setValueAtTime(vol, actx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + dur);
+    o.connect(g); g.connect(actx.destination);
+    o.start(); o.stop(actx.currentTime + dur);
+  } catch(e) {}
 }
 
-// 7 kostek tvořících postavu panáčka
 const PARTS = [
   { ox: 0,   oy: -18, w: 16, h: 14, head: true },
   { ox: 0,   oy: -3,  w: 16, h: 12 },
@@ -124,219 +48,182 @@ const PARTS = [
   { ox: 5,   oy: 21,  w: 8,  h: 13, limb: 'legR' }
 ];
 
-// TUTORIAL ÚROVEŇ
-const TUTORIAL_LEVEL = {
-  name: 'TUTORIAL',
-  hint: 'Postupuj podle pokynů na obrazovce',
-  isTutorial: true,
-  spawn: { x: 80, y: 334 },
-  goal: { x: 780, y: 320, w: 46, h: 70 },
-  walls: [
-    { x: 0, y: 390, w: 880, h: 70 },
-    { x: 0, y: 0, w: 880, h: 16 },
-    { x: 0, y: 0, w: 16, h: 460 },
-    { x: 864, y: 0, w: 16, h: 460 },
-    { x: 520, y: 16, w: 32, h: 334 }
-  ],
-  buttons: [{ id: 99, x: 260, y: 378, w: 74, h: 12, pressed: false }],
-  doors: [{ id: 99, x: 660, y: 230, w: 22, h: 160, openY: 70, currY: 230 }],
-  hazards: []
-};
-
-// 10 LEHKÝCH, PLYNULÝCH ÚROVNÍ
 const LEVELS = [
   {
-    name: '01 // PRŮLEZ',
-    hint: 'Rozběhni se [D] a zmáčkni [E] pro podklouznutí',
-    spawn: { x: 90, y: 334 },
-    goal: { x: 770, y: 320, w: 46, h: 70 },
+    name: '01 // LOW CLEARANCE',
+    hint: 'Run [D] and press [E] before the wall — you won\'t fit, the pieces will',
+    spawn: { x: 60, y: 336 },
+    goal: { x: 800, y: 320, w: 46, h: 70 },
     walls: [
       { x: 0, y: 390, w: 880, h: 70 },
       { x: 0, y: 0, w: 880, h: 16 },
       { x: 0, y: 0, w: 16, h: 460 },
       { x: 864, y: 0, w: 16, h: 460 },
-      { x: 420, y: 16, w: 32, h: 334 }
+      { x: 400, y: 16, w: 40, h: 334 }
     ],
     buttons: [], doors: [], hazards: []
   },
   {
-    name: '02 // SPÍNAČ',
-    hint: 'Rozpadni se na tlačítku [E], jedna kostka otevře bránu',
-    spawn: { x: 90, y: 334 },
-    goal: { x: 770, y: 320, w: 46, h: 70 },
+    name: '02 // HEIGHT',
+    hint: 'Target is high. Jump [SPACE], break [E], the pieces fly higher',
+    spawn: { x: 80, y: 336 },
+    goal: { x: 700, y: 130, w: 46, h: 70 },
     walls: [
       { x: 0, y: 390, w: 880, h: 70 },
       { x: 0, y: 0, w: 880, h: 16 },
       { x: 0, y: 0, w: 16, h: 460 },
       { x: 864, y: 0, w: 16, h: 460 },
-      { x: 520, y: 16, w: 24, h: 214 }
+      { x: 500, y: 200, w: 380, h: 18 }
     ],
-    buttons: [{ id: 1, x: 280, y: 378, w: 76, h: 12, pressed: false }],
-    doors: [{ id: 1, x: 520, y: 230, w: 24, h: 160, openY: 70, currY: 230 }],
-    hazards: []
+    buttons: [], doors: [], hazards: []
   },
   {
-    name: '03 // ŠIROKÁ PROPAST',
-    hint: 'V celku to nedoskočíš! Skoč [MEZERNÍK] a ve vzduchu [E]',
-    spawn: { x: 100, y: 334 },
-    goal: { x: 770, y: 320, w: 46, h: 70 },
+    name: '03 // LONG GAP',
+    hint: 'Wide gap. Sprint, jump, and press [E] in mid-air',
+    spawn: { x: 60, y: 336 },
+    goal: { x: 800, y: 320, w: 46, h: 70 },
     walls: [
-      { x: 0, y: 390, w: 325, h: 70 },
-      { x: 555, y: 390, w: 325, h: 70 }, // 230px propast – nepřeskočitelná v celku, snadná v rozpadu
+      { x: 0, y: 390, w: 220, h: 70 },
+      { x: 570, y: 390, w: 310, h: 70 },
       { x: 0, y: 0, w: 880, h: 16 },
       { x: 0, y: 0, w: 16, h: 460 },
       { x: 864, y: 0, w: 16, h: 460 }
     ],
     buttons: [], doors: [],
-    hazards: [{ x: 325, y: 442, w: 230, h: 18 }]
+    hazards: [{ x: 220, y: 442, w: 350, h: 18 }]
   },
   {
-    name: '04 // DVA PRŮLEZY',
-    hint: 'Podjeď první zeď [E], slož se a podjeď druhou',
-    spawn: { x: 70, y: 334 },
-    goal: { x: 790, y: 320, w: 46, h: 70 },
+    name: '04 // SPIKE FALL',
+    hint: 'Drop down and break [E] to clear the spikes',
+    spawn: { x: 60, y: 80 },
+    goal: { x: 680, y: 320, w: 46, h: 70 },
     walls: [
-      { x: 0, y: 390, w: 880, h: 70 },
+      { x: 0, y: 140, w: 400, h: 320 },
+      { x: 640, y: 390, w: 240, h: 70 },
       { x: 0, y: 0, w: 880, h: 16 },
-      { x: 0, y: 0, w: 16, h: 460 },
-      { x: 864, y: 0, w: 16, h: 460 },
-      { x: 280, y: 16, w: 28, h: 334 },
-      { x: 560, y: 16, w: 28, h: 334 }
-    ],
-    buttons: [], doors: [], hazards: []
-  },
-  {
-    name: '05 // SCHOD',
-    hint: 'Vyskoč na plošinu, rozpadni se [E] a slož se nahoře',
-    spawn: { x: 90, y: 334 },
-    goal: { x: 770, y: 170, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 390, w: 880, h: 70 },
-      { x: 0, y: 0, w: 880, h: 16 },
-      { x: 0, y: 0, w: 16, h: 460 },
-      { x: 864, y: 0, w: 16, h: 460 },
-      { x: 220, y: 310, w: 180, h: 18 },
-      { x: 460, y: 240, w: 404, h: 18 },
-      { x: 610, y: 16, w: 26, h: 184 }
-    ],
-    buttons: [], doors: [], hazards: []
-  },
-  {
-    name: '06 // ZÁMEK NA ŘÍMSE',
-    hint: 'Kostka na horní římse otevře dveře dole',
-    spawn: { x: 90, y: 334 },
-    goal: { x: 770, y: 320, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 390, w: 880, h: 70 },
-      { x: 0, y: 0, w: 880, h: 16 },
-      { x: 0, y: 0, w: 16, h: 460 },
-      { x: 864, y: 0, w: 16, h: 460 },
-      { x: 210, y: 300, w: 220, h: 18 },
-      { x: 580, y: 16, w: 24, h: 214 }
-    ],
-    buttons: [{ id: 6, x: 340, y: 288, w: 76, h: 12, pressed: false }],
-    doors: [{ id: 6, x: 580, y: 230, w: 24, h: 160, openY: 70, currY: 230 }],
-    hazards: []
-  },
-  {
-    name: '07 // SKOK A PRŮLET',
-    hint: 'Přeskoč ostny a hned za nimi se rozpadni pod stěnou',
-    spawn: { x: 70, y: 334 },
-    goal: { x: 790, y: 320, w: 46, h: 70 },
-    walls: [
-      { x: 0, y: 390, w: 880, h: 70 },
-      { x: 0, y: 0, w: 880, h: 16 },
-      { x: 0, y: 0, w: 16, h: 460 },
-      { x: 864, y: 0, w: 16, h: 460 },
-      { x: 540, y: 16, w: 30, h: 334 }
+      { x: 864, y: 0, w: 16, h: 460 }
     ],
     buttons: [], doors: [],
-    hazards: [{ x: 260, y: 374, w: 84, h: 16 }]
+    hazards: [{ x: 400, y: 442, w: 240, h: 18 }]
   },
   {
-    name: '08 // BOUNCE VÝSKOK',
-    hint: 'Složení [E] tě vždy nadhodí vzhůru – využij to',
-    spawn: { x: 90, y: 334 },
-    goal: { x: 770, y: 110, w: 46, h: 70 },
+    name: '05 // FLOOR HOLE',
+    hint: 'The hole is narrow — break [E] and let the pieces fall through',
+    spawn: { x: 80, y: 226 },
+    goal: { x: 700, y: 320, w: 46, h: 70 },
     walls: [
+      { x: 0, y: 280, w: 420, h: 20 },
+      { x: 444, y: 280, w: 436, h: 20 },
       { x: 0, y: 390, w: 880, h: 70 },
       { x: 0, y: 0, w: 880, h: 16 },
       { x: 0, y: 0, w: 16, h: 460 },
-      { x: 864, y: 0, w: 16, h: 460 },
-      { x: 250, y: 295, w: 190, h: 18 },
-      { x: 490, y: 220, w: 170, h: 18 },
-      { x: 690, y: 180, w: 174, h: 18 }
+      { x: 864, y: 0, w: 16, h: 460 }
     ],
     buttons: [], doors: [], hazards: []
   },
   {
-    name: '09 // DVOJITÁ BRÁNA',
-    hint: 'Stačí jedna kostka na každém tlačítku',
-    spawn: { x: 70, y: 334 },
-    goal: { x: 790, y: 320, w: 46, h: 70 },
+    name: '06 // PILLARS',
+    hint: 'The gap between the pillars is tight, pass through it while broken [E]',
+    spawn: { x: 40, y: 286 },
+    goal: { x: 800, y: 250, w: 46, h: 70 },
+    walls: [
+      { x: 0, y: 340, w: 160, h: 120 },
+      { x: 760, y: 320, w: 120, h: 140 },
+      { x: 460, y: 260, w: 40, h: 200 },
+      { x: 460, y: 0, w: 40, h: 220 },
+      { x: 0, y: 0, w: 880, h: 16 },
+      { x: 0, y: 0, w: 16, h: 460 },
+      { x: 864, y: 0, w: 16, h: 460 }
+    ],
+    buttons: [], doors: [],
+    hazards: [{ x: 160, y: 442, w: 600, h: 18 }]
+  },
+  {
+    name: '07 // BETWEEN WALLS',
+    hint: 'No platform in the middle! Break [E] and fly over the spikes',
+    spawn: { x: 40, y: 336 },
+    goal: { x: 700, y: 320, w: 46, h: 70 },
+    walls: [
+      { x: 0, y: 390, w: 150, h: 70 },
+      { x: 700, y: 390, w: 180, h: 70 },
+      { x: 250, y: 80, w: 30, h: 362 },
+      { x: 600, y: 80, w: 30, h: 362 },
+      { x: 0, y: 0, w: 880, h: 16 },
+      { x: 0, y: 0, w: 16, h: 460 },
+      { x: 864, y: 0, w: 16, h: 460 }
+    ],
+    buttons: [], doors: [],
+    hazards: [{ x: 150, y: 442, w: 550, h: 18 }]
+  },
+  {
+    name: '08 // NARROW PLATFORMS',
+    hint: 'The middle platform is gone! Use the bounce after reassembly [E]',
+    spawn: { x: 60, y: 336 },
+    goal: { x: 750, y: 130, w: 46, h: 70 },
     walls: [
       { x: 0, y: 390, w: 880, h: 70 },
       { x: 0, y: 0, w: 880, h: 16 },
       { x: 0, y: 0, w: 16, h: 460 },
       { x: 864, y: 0, w: 16, h: 460 },
-      { x: 460, y: 16, w: 22, h: 214 },
-      { x: 640, y: 16, w: 22, h: 214 }
+      { x: 200, y: 310, w: 45, h: 18 },
+      { x: 660, y: 170, w: 50, h: 18 }
     ],
-    buttons: [
-      { id: 91, x: 210, y: 378, w: 72, h: 12, pressed: false },
-      { id: 92, x: 320, y: 378, w: 72, h: 12, pressed: false }
-    ],
-    doors: [
-      { id: 91, x: 460, y: 230, w: 22, h: 160, openY: 70, currY: 230 },
-      { id: 92, x: 640, y: 230, w: 22, h: 160, openY: 70, currY: 230 }
-    ],
-    hazards: []
+    buttons: [], doors: [], hazards: []
   },
   {
-    name: '10 // FINÁLE',
-    hint: 'Spoj všechny schopnosti: propast, spínač i průlez',
-    spawn: { x: 70, y: 334 },
-    goal: { x: 790, y: 130, w: 46, h: 70 },
+    name: '09 // COMBINATION',
+    hint: 'Drop down, clear the spikes while broken [E], reach the goal below',
+    spawn: { x: 40, y: 140 },
+    goal: { x: 780, y: 320, w: 46, h: 70 },
     walls: [
-      { x: 0, y: 390, w: 290, h: 70 },
-      { x: 480, y: 390, w: 400, h: 70 },
+      { x: 0, y: 200, w: 180, h: 260 },
+      { x: 600, y: 390, w: 280, h: 70 },
+      { x: 560, y: 280, w: 320, h: 18 },
       { x: 0, y: 0, w: 880, h: 16 },
       { x: 0, y: 0, w: 16, h: 460 },
-      { x: 864, y: 0, w: 16, h: 460 },
-      { x: 540, y: 295, w: 150, h: 18 },
-      { x: 710, y: 200, w: 154, h: 18 }
+      { x: 864, y: 0, w: 16, h: 460 }
+    ],
+    buttons: [], doors: [],
+    hazards: [{ x: 180, y: 442, w: 420, h: 18 }]
+  },
+  {
+    name: '10 // FINALE',
+    hint: 'Clearance, gap, stairs. Everything at once!',
+    spawn: { x: 60, y: 336 },
+    goal: { x: 800, y: 110, w: 46, h: 70 },
+    walls: [
+      { x: 0, y: 390, w: 200, h: 70 },
+      { x: 200, y: 16, w: 40, h: 334 },
+      { x: 590, y: 390, w: 290, h: 70 },
+      { x: 700, y: 180, w: 180, h: 18 },
+      { x: 0, y: 0, w: 880, h: 16 },
+      { x: 0, y: 0, w: 16, h: 460 },
+      { x: 864, y: 0, w: 16, h: 460 }
     ],
     buttons: [{ id: 10, x: 580, y: 378, w: 74, h: 12, pressed: false }],
-    doors: [{ id: 10, x: 710, y: 60, w: 22, h: 140, openY: -80, currY: 60 }],
-    hazards: [{ x: 290, y: 442, w: 190, h: 18 }]
+    doors: [{ id: 10, x: 700, y: 180, w: 22, h: 140, openY: 320, currY: 180 }],
+    hazards: [{ x: 240, y: 442, w: 350, h: 18 }]
   }
 ];
 
-// STAV APLIKACE: 'MENU' | 'CONTROLS' | 'TUTORIAL' | 'GAME'
 let screen = 'MENU';
 let menuIndex = 0;
-const MENU_ITEMS = ['PLAY', 'CONTROLS', 'TUTORIAL'];
+const MENU_ITEMS = ['PLAY', 'LEVELS', 'CONTROLS'];
 let menuButtonsRects = [];
-
+let levelButtonsRects = [];
+let backButtonRect = null;
+let levelHoverIdx = 0;
 let lvlIdx = 0;
 let done = new Set();
 let lvl = null;
 
-const GRAVITY = 0.38;
+const GRAVITY = 0.36;
 let player = {
   x: 0, y: 0, w: 32, h: 54,
-  vx: 0, vy: 0,
-  speed: 5.0,
-  jump: -10.6,
-  grounded: false,
-  coyote: 0,
-  state: 'ASSEMBLED',
-  timer: 0,
-  tx: 0, ty: 0,
-  facing: 1,
-  walk: 0,
-  scaleX: 1,
-  scaleY: 1
+  vx: 0, vy: 0, speed: 4.8, jump: -10.2,
+  grounded: false, coyote: 0,
+  state: 'ASSEMBLED', timer: 0, tx: 0, ty: 0,
+  facing: 1, walk: 0, scaleX: 1, scaleY: 1
 };
 
 let pieces = [];
@@ -345,84 +232,36 @@ let dust = [];
 let keys = {};
 let animFrame = 0;
 
-function openMenu() {
-  screen = 'MENU';
-  btnToMenu.style.display = 'none';
-  dotsEl.innerHTML = '';
-  lvlNameEl.textContent = 'BOUNCE BACK';
-  hintEl.textContent = 'Vyber možnost v menu';
-}
-
-function openControls() {
-  screen = 'CONTROLS';
-  btnToMenu.style.display = 'inline-block';
-  dotsEl.innerHTML = '';
-  lvlNameEl.textContent = 'CONTROLS';
-  hintEl.textContent = '[ESC] nebo klik pro návrat';
-}
-
-function startTutorial() {
-  screen = 'TUTORIAL';
-  btnToMenu.style.display = 'inline-block';
-  dotsEl.innerHTML = '';
-  lvl = JSON.parse(JSON.stringify(TUTORIAL_LEVEL));
-  resetPlayerToSpawn();
-  lvlNameEl.textContent = lvl.name;
-  hintEl.textContent = lvl.hint;
-}
-
+function openMenu() { screen = 'MENU'; }
+function openLevels() { screen = 'LEVELS'; levelHoverIdx = 0; }
+function openControls() { screen = 'CONTROLS'; }
 function loadLevel(i) {
+  if (i >= LEVELS.length) { openMenu(); return; }
   screen = 'GAME';
-  btnToMenu.style.display = 'inline-block';
   lvlIdx = i;
   lvl = JSON.parse(JSON.stringify(LEVELS[i]));
   resetPlayerToSpawn();
-  lvlNameEl.textContent = lvl.name;
-  hintEl.textContent = lvl.hint;
-  renderDots();
 }
-
 function resetPlayerToSpawn() {
   Object.assign(player, {
-    x: lvl.spawn.x, y: lvl.spawn.y,
-    vx: 0, vy: 0,
-    grounded: false, coyote: 0,
-    state: 'ASSEMBLED',
-    scaleX: 1, scaleY: 1
+    x: lvl.spawn.x, y: lvl.spawn.y, vx: 0, vy: 0,
+    grounded: false, coyote: 0, state: 'ASSEMBLED', scaleX: 1, scaleY: 1
   });
-  pieces = [];
-  dust = [];
-  anchorIdx = 0;
+  pieces = []; dust = []; anchorIdx = 0;
 }
-
-function renderDots() {
-  dotsEl.innerHTML = '';
-  LEVELS.forEach((_, i) => {
-    const b = document.createElement('button');
-    b.className = 'dot' + (i === lvlIdx ? ' active' : '') + (done.has(i) ? ' done' : '');
-    b.textContent = i + 1;
-    b.onclick = () => loadLevel(i);
-    dotsEl.appendChild(b);
-  });
-}
-
-btnToMenu.onclick = openMenu;
 
 function solids() {
   const s = [...lvl.walls];
   lvl.doors.forEach(d => s.push({ x: d.x, y: d.currY, w: d.w, h: d.h }));
   return s;
 }
-
 function hit(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
-
 function addDust(x, y, n = 6) {
   for (let i = 0; i < n; i++) {
-    const a = Math.random() * Math.PI * 2;
-    const sp = 0.8 + Math.random() * 2.2;
-    dust.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 0.5, life: 1, s: 3 + Math.random() * 2 });
+    const a = Math.random() * Math.PI * 2, sp = 0.8 + Math.random() * 2.2;
+    dust.push({ x, y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp-0.5, life: 1, s: 3+Math.random()*2 });
   }
 }
 
@@ -430,23 +269,16 @@ function shatter() {
   if (player.state !== 'ASSEMBLED') return;
   player.state = 'SHATTERED';
   beep(220, 90, 0.14);
-
-  const cx = player.x + player.w / 2;
-  const cy = player.y + player.h / 2;
-  const boostVx = player.vx * 1.48 + (Math.abs(player.vx) > 0.5 ? player.facing * 1.6 : 0);
-
+  const cx = player.x + player.w/2, cy = player.y + player.h/2;
+  const boostVx = player.vx * 1.5 + player.facing * 2.5;
   pieces = PARTS.map(p => ({
-    x: cx + p.ox - p.w / 2,
-    y: cy + p.oy - p.h / 2,
-    w: p.w, h: p.h,
-    ox: p.ox, oy: p.oy,
-    head: !!p.head,
-    vx: boostVx + p.ox * 0.16 + (Math.random() - 0.5) * 0.9,
-    vy: player.vy * 0.92 + p.oy * 0.05 - 1.3,
-    rot: 0,
-    vrot: (Math.random() - 0.5) * 0.1
+    x: cx + p.ox - p.w/2, y: cy + p.oy - p.h/2,
+    w: p.w, h: p.h, ox: p.ox, oy: p.oy, head: !!p.head,
+    vx: boostVx + p.ox*0.14 + (Math.random()-0.5)*0.8,
+    vy: player.vy*0.85 + p.oy*0.04 - 1.2,
+    rot: 0, vrot: (Math.random()-0.5)*0.1,
+    dead: false
   }));
-
   let best = 0;
   pieces.forEach((p, i) => {
     if (player.facing >= 0 ? p.x > pieces[best].x : p.x < pieces[best].x) best = i;
@@ -458,33 +290,26 @@ function shatter() {
 function reassemble() {
   if (player.state !== 'SHATTERED' || !pieces.length) return;
   const a = pieces[anchorIdx];
-  const acx = a.x + a.w / 2;
-  const acy = a.y + a.h / 2;
-
-  let tx = acx - a.ox - player.w / 2;
-  let ty = acy - a.oy - player.h / 2 - 2;
-
+  if (!a || a.dead) { anchorIdx = 0; return; }
+  const acx = a.x + a.w/2, acy = a.y + a.h/2;
+  let tx = acx - a.ox - player.w/2;
+  let ty = acy - a.oy - player.h/2 - 2;
   const sol = solids();
   for (let iter = 0; iter < 3; iter++) {
     for (let s of sol) {
-      if (hit({ x: tx, y: ty, w: player.w, h: player.h }, s)) {
-        const overlapTop = (ty + player.h) - s.y;
-        const overlapBottom = (s.y + s.h) - ty;
-        const overlapLeft = (tx + player.w) - s.x;
-        const overlapRight = (s.x + s.w) - tx;
-        const minO = Math.min(overlapTop, overlapBottom, overlapLeft, overlapRight);
-        if (minO === overlapTop) ty = s.y - player.h;
-        else if (minO === overlapBottom) ty = s.y + s.h;
-        else if (minO === overlapLeft) tx = s.x - player.w;
-        else tx = s.x + s.w;
+      if (hit({x:tx,y:ty,w:player.w,h:player.h}, s)) {
+        const oT = (ty+player.h)-s.y, oB = (s.y+s.h)-ty;
+        const oL = (tx+player.w)-s.x, oR = (s.x+s.w)-tx;
+        const m = Math.min(oT,oB,oL,oR);
+        if (m===oT) ty = s.y-player.h;
+        else if (m===oB) ty = s.y+s.h;
+        else if (m===oL) tx = s.x-player.w;
+        else tx = s.x+s.w;
       }
     }
   }
-
-  player.tx = tx;
-  player.ty = ty;
-  player.state = 'REASSEMBLING';
-  player.timer = 0;
+  player.tx = tx; player.ty = ty;
+  player.state = 'REASSEMBLING'; player.timer = 0;
   pieces.forEach(p => { p.sx = p.x; p.sy = p.y; });
   beep(280, 560, 0.16);
   addDust(acx, acy, 10);
@@ -492,153 +317,136 @@ function reassemble() {
 
 function activateMenuSelection(idx) {
   beep(360, 520, 0.1);
-  if (idx === 0) loadLevel(0);
-  else if (idx === 1) openControls();
-  else if (idx === 2) startTutorial();
+  if (idx === 0) loadLevel(lvlIdx);
+  else if (idx === 1) openLevels();
+  else if (idx === 2) openControls();
 }
 
 window.addEventListener('keydown', e => {
-  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
-
-  if (e.code === 'Escape') {
-    if (screen !== 'MENU') openMenu();
-    return;
-  }
-
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
+  if (e.code === 'Escape') { if (screen !== 'MENU') openMenu(); return; }
+  
   if (screen === 'MENU') {
     if (!keys[e.code]) {
-      if (e.code === 'ArrowUp' || e.code === 'KeyW') {
-        menuIndex = (menuIndex + MENU_ITEMS.length - 1) % MENU_ITEMS.length;
-        beep(300, 360, 0.05, 0.03);
-      } else if (e.code === 'ArrowDown' || e.code === 'KeyS') {
-        menuIndex = (menuIndex + 1) % MENU_ITEMS.length;
-        beep(300, 360, 0.05, 0.03);
-      } else if (e.code === 'Enter' || e.code === 'Space') {
-        activateMenuSelection(menuIndex);
-      }
+      if (e.code==='ArrowUp'||e.code==='KeyW') { menuIndex=(menuIndex+MENU_ITEMS.length-1)%MENU_ITEMS.length; beep(300,360,0.05,0.03); }
+      else if (e.code==='ArrowDown'||e.code==='KeyS') { menuIndex=(menuIndex+1)%MENU_ITEMS.length; beep(300,360,0.05,0.03); }
+      else if (e.code==='Enter'||e.code==='Space') activateMenuSelection(menuIndex);
     }
-    keys[e.code] = true;
-    return;
+    keys[e.code]=true; return;
   }
-
+  if (screen === 'LEVELS') {
+    if (!keys[e.code]) {
+      if (e.code==='ArrowLeft') { levelHoverIdx = levelHoverIdx===0 ? 4 : levelHoverIdx===5 ? 9 : levelHoverIdx-1; beep(300,360,0.05,0.03); }
+      else if (e.code==='ArrowRight') { levelHoverIdx = levelHoverIdx===4 ? 0 : levelHoverIdx===9 ? 5 : levelHoverIdx+1; beep(300,360,0.05,0.03); }
+      else if (e.code==='ArrowUp'||e.code==='ArrowDown') { levelHoverIdx = (levelHoverIdx + 5) % 10; beep(300,360,0.05,0.03); }
+      else if (e.code==='Enter'||e.code==='Space') { beep(360,520,0.1); loadLevel(levelHoverIdx); }
+    }
+    keys[e.code]=true; return;
+  }
   if (screen === 'CONTROLS') {
-    if (!keys[e.code] && (e.code === 'Enter' || e.code === 'Space')) openMenu();
-    keys[e.code] = true;
-    return;
+    if (!keys[e.code] && (e.code==='Enter'||e.code==='Space')) openMenu();
+    keys[e.code]=true; return;
   }
-
   if (!keys[e.code]) {
     if (e.code === 'KeyE') {
       if (player.state === 'ASSEMBLED') shatter();
       else if (player.state === 'SHATTERED') reassemble();
     }
     if (e.code === 'KeyQ' && player.state === 'SHATTERED') {
-      anchorIdx = (anchorIdx + 1) % pieces.length;
+      for (let k = 0; k < pieces.length; k++) {
+        anchorIdx = (anchorIdx + 1) % pieces.length;
+        if (!pieces[anchorIdx].dead) break;
+      }
       beep(440, 520, 0.06, 0.04);
     }
-    if (e.code === 'KeyR') {
-      if (screen === 'TUTORIAL') startTutorial();
-      else loadLevel(lvlIdx);
-    }
+    if (e.code === 'KeyR') loadLevel(lvlIdx);
   }
   keys[e.code] = true;
 });
 window.addEventListener('keyup', e => keys[e.code] = false);
 
 canvas.addEventListener('mousemove', e => {
-  if (screen !== 'MENU') return;
   const r = canvas.getBoundingClientRect();
-  const mx = e.clientX - r.left;
-  const my = e.clientY - r.top;
-  menuButtonsRects.forEach((b, i) => {
-    if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
-      menuIndex = i;
-    }
-  });
-});
-
-canvas.addEventListener('mousedown', e => {
-  const r = canvas.getBoundingClientRect();
-  const mx = e.clientX - r.left;
-  const my = e.clientY - r.top;
-
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
   if (screen === 'MENU') {
     menuButtonsRects.forEach((b, i) => {
-      if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
-        activateMenuSelection(i);
-      }
+      if (mx>=b.x && mx<=b.x+b.w && my>=b.y && my<=b.y+b.h) menuIndex = i;
+    });
+  } else if (screen === 'LEVELS') {
+    levelButtonsRects.forEach((b) => {
+      if (mx>=b.x && mx<=b.x+b.w && my>=b.y && my<=b.y+b.h) levelHoverIdx = b.idx;
+    });
+  }
+});
+canvas.addEventListener('mousedown', e => {
+  const r = canvas.getBoundingClientRect();
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  if (screen === 'MENU') {
+    menuButtonsRects.forEach((b, i) => {
+      if (mx>=b.x && mx<=b.x+b.w && my>=b.y && my<=b.y+b.h) activateMenuSelection(i);
     });
     return;
   }
-
-  if (screen === 'CONTROLS') {
-    openMenu();
+  if (screen === 'LEVELS') {
+    levelButtonsRects.forEach((b) => {
+      if (mx>=b.x && mx<=b.x+b.w && my>=b.y && my<=b.y+b.h) { beep(360,520,0.1); loadLevel(b.idx); }
+    });
+    if (backButtonRect && mx>=backButtonRect.x && mx<=backButtonRect.x+backButtonRect.w && my>=backButtonRect.y && my<=backButtonRect.y+backButtonRect.h) {
+      openMenu();
+    }
     return;
   }
-
+  if (screen === 'CONTROLS') { openMenu(); return; }
   if (player.state !== 'SHATTERED') return;
-  let best = -1, minD = 50;
-  pieces.forEach((p, i) => {
-    const d = Math.hypot(p.x + p.w / 2 - mx, p.y + p.h / 2 - my);
-    if (d < minD) { minD = d; best = i; }
+  let best=-1, minD=60;
+  pieces.forEach((p,i)=>{
+    if (p.dead) return;
+    const d=Math.hypot(p.x+p.w/2-mx,p.y+p.h/2-my);
+    if(d<minD){minD=d;best=i;}
   });
-  if (best !== -1) {
-    anchorIdx = best;
-    beep(480, 580, 0.06, 0.04);
-  }
+  if (best!==-1) { anchorIdx=best; beep(480,580,0.06,0.04); }
 });
 
 function updateGame() {
   const sol = solids();
 
   lvl.buttons.forEach(b => {
+    if (b.pressed) return;
     let active = false;
     if (player.state === 'ASSEMBLED' && hit(player, b)) active = true;
     if (player.state !== 'ASSEMBLED') {
-      for (let p of pieces) if (hit(p, b)) { active = true; break; }
+      for (let p of pieces) if (!p.dead && hit(p, b)) { active = true; break; }
     }
-    if (active && !b.pressed) beep(360, 520, 0.08, 0.04);
-    b.pressed = active;
+    if (active) { b.pressed = true; beep(360, 520, 0.1, 0.05); }
   });
 
   lvl.doors.forEach(d => {
-    const sourceDoors = lvl.isTutorial ? TUTORIAL_LEVEL.doors : LEVELS[lvlIdx].doors;
     const b = lvl.buttons.find(btn => btn.id === d.id);
-    const target = (b && b.pressed) ? d.openY : sourceDoors.find(od => od.id === d.id).y;
-    d.currY += (target - d.currY) * 0.14;
+    if (b && b.pressed) d.currY += (d.openY - d.currY) * 0.14;
+    else d.currY += (d.y - d.currY) * 0.14;
   });
 
-  player.scaleX += (1 - player.scaleX) * 0.18;
-  player.scaleY += (1 - player.scaleY) * 0.18;
+  player.scaleX += (1-player.scaleX)*0.18;
+  player.scaleY += (1-player.scaleY)*0.18;
 
   if (player.state === 'ASSEMBLED') {
     const left = keys['ArrowLeft'] || keys['KeyA'];
     const right = keys['ArrowRight'] || keys['KeyD'];
     const targetVx = left ? -player.speed : right ? player.speed : 0;
     player.vx += (targetVx - player.vx) * 0.25;
-
     if (Math.abs(player.vx) > 0.3) {
       player.facing = player.vx > 0 ? 1 : -1;
       if (player.grounded) player.walk += Math.abs(player.vx) * 0.06;
-    } else {
-      player.walk = 0;
-    }
-
+    } else player.walk = 0;
     if (player.grounded) player.coyote = 8;
     else if (player.coyote > 0) player.coyote--;
-
-    if ((keys['Space'] || keys['ArrowUp'] || keys['KeyW']) && player.coyote > 0) {
-      player.vy = player.jump;
-      player.grounded = false;
-      player.coyote = 0;
-      player.scaleX = 0.82;
-      player.scaleY = 1.22;
+    if ((keys['Space']||keys['ArrowUp']||keys['KeyW']) && player.coyote > 0) {
+      player.vy = player.jump; player.grounded = false; player.coyote = 0;
+      player.scaleX = 0.82; player.scaleY = 1.22;
       beep(240, 420, 0.1);
-      addDust(player.x + player.w / 2, player.y + player.h, 5);
+      addDust(player.x + player.w/2, player.y + player.h, 5);
     }
-
     player.vy += GRAVITY;
-
     player.x += player.vx;
     for (let s of sol) {
       if (hit(player, s)) {
@@ -647,50 +455,36 @@ function updateGame() {
         player.vx = 0;
       }
     }
-
-    const wasGrounded = player.grounded;
+    const wasG = player.grounded;
     player.y += player.vy;
     player.grounded = false;
     for (let s of sol) {
       if (hit(player, s)) {
         if (player.vy > 0) {
-          if (!wasGrounded && player.vy > 3) {
-            player.scaleX = 1.2;
-            player.scaleY = 0.82;
-            addDust(player.x + player.w / 2, s.y, 4);
-          }
-          player.y = s.y - player.h;
-          player.vy = 0;
-          player.grounded = true;
+          if (!wasG && player.vy > 3) { player.scaleX = 1.2; player.scaleY = 0.82; addDust(player.x+player.w/2, s.y, 4); }
+          player.y = s.y - player.h; player.vy = 0; player.grounded = true;
         } else if (player.vy < 0) {
-          player.y = s.y + s.h;
-          player.vy = 0;
+          player.y = s.y + s.h; player.vy = 0;
         }
       }
     }
-
     for (let h of lvl.hazards) {
       if (hit(player, h)) {
         beep(150, 60, 0.2);
-        if (screen === 'TUTORIAL') startTutorial();
-        else loadLevel(lvlIdx);
+        loadLevel(lvlIdx);
         return;
       }
     }
-
     if (hit(player, lvl.goal)) {
       beep(440, 660, 0.14);
-      if (screen === 'TUTORIAL') {
-        loadLevel(0);
-      } else {
-        done.add(lvlIdx);
-        loadLevel((lvlIdx + 1) % LEVELS.length);
-      }
+      done.add(lvlIdx);
+      loadLevel(lvlIdx + 1);
       return;
     }
   }
   else if (player.state === 'SHATTERED') {
     pieces.forEach(p => {
+      if (p.dead) return;
       p.vy += GRAVITY;
       p.x += p.vx;
       for (let s of sol) {
@@ -704,43 +498,51 @@ function updateGame() {
       for (let s of sol) {
         if (hit(p, s)) {
           if (p.vy > 0) {
-            p.y = s.y - p.h;
-            p.vy = -p.vy * 0.22;
-            p.vx *= 0.91;
-            p.vrot *= 0.6;
+            p.y = s.y - p.h; p.vy = -p.vy * 0.22;
+            p.vx *= 0.91; p.vrot *= 0.6;
             if (Math.abs(p.vy) < 0.5) p.vy = 0;
           } else if (p.vy < 0) {
-            p.y = s.y + s.h;
-            p.vy = 0;
+            p.y = s.y + s.h; p.vy = 0;
           }
         }
       }
+      for (let h of lvl.hazards) {
+        if (hit(p, h)) { p.dead = true; break; }
+      }
+      if (p.y > 500 || p.x < -50 || p.x > 930) p.dead = true;
       p.rot += p.vrot;
     });
+    pieces = pieces.filter(p => !p.dead);
+
+    if (pieces.length === 0) {
+      loadLevel(lvlIdx);
+      return;
+    }
+    if (!pieces[anchorIdx] || pieces[anchorIdx].dead) {
+      anchorIdx = 0;
+    }
   }
   else if (player.state === 'REASSEMBLING') {
     player.timer += 0.09;
     const t = Math.min(player.timer, 1);
-    const ease = 1 - Math.pow(1 - t, 3);
-
+    const ease = 1 - Math.pow(1-t, 3);
     pieces.forEach(p => {
-      const dx = player.tx + player.w / 2 + p.ox - p.w / 2;
-      const dy = player.ty + player.h / 2 + p.oy - p.h / 2;
+      const dx = player.tx + player.w/2 + p.ox - p.w/2;
+      const dy = player.ty + player.h/2 + p.oy - p.h/2;
       p.x = p.sx + (dx - p.sx) * ease;
       p.y = p.sy + (dy - p.sy) * ease;
-      p.rot *= (1 - t);
+      p.rot *= (1-t);
     });
-
     if (t >= 1) {
-      player.x = player.tx;
-      player.y = player.ty;
-      player.vy = -6.8;
+      player.x = player.tx; player.y = player.ty;
+      if (lvlIdx === 6 || lvlIdx === 7) player.vy = -4.5;
+      else player.vy = 0;
       player.vx = 0;
-      player.scaleX = 0.84;
-      player.scaleY = 1.2;
+      player.scaleX = 0.95; player.scaleY = 1.05;
       player.state = 'ASSEMBLED';
       pieces = [];
-      addDust(player.x + player.w / 2, player.y + player.h / 2, 8);
+      addDust(player.x + player.w/2, player.y + player.h/2, 8);
+      beep(320, 480, 0.12, 0.05);
     }
   }
 
@@ -751,29 +553,24 @@ function updateGame() {
 function drawEyes(facing) {
   ctx.fillStyle = PAPER;
   const ex = facing >= 0 ? 2 : -2;
-  ctx.fillRect(-4 + ex, -2, 2.5, 4);
-  ctx.fillRect(2 + ex, -2, 2.5, 4);
+  ctx.fillRect(-4+ex, -2, 2.5, 4);
+  ctx.fillRect(2+ex, -2, 2.5, 4);
 }
-
-function drawPlayerSprite(cx, cy, walk, scaleX, scaleY, facing) {
+function drawPlayerSprite(cx, cy, walk, sx, sy, facing) {
   const swing = Math.sin(walk) * 3.5;
   ctx.save();
-  ctx.translate(cx, cy + 27);
-  ctx.scale(scaleX, scaleY);
-  ctx.translate(0, -27);
-
+  ctx.translate(cx, cy+27); ctx.scale(sx, sy); ctx.translate(0, -27);
   PARTS.forEach(p => {
     let ay = 0;
-    if (p.limb === 'legL') ay = swing;
-    if (p.limb === 'legR') ay = -swing;
-    if (p.limb === 'armL') ay = -swing * 0.6;
-    if (p.limb === 'armR') ay = swing * 0.6;
-    if (p.head) ay = -Math.abs(swing) * 0.25;
-
+    if (p.limb==='legL') ay = swing;
+    if (p.limb==='legR') ay = -swing;
+    if (p.limb==='armL') ay = -swing*0.6;
+    if (p.limb==='armR') ay = swing*0.6;
+    if (p.head) ay = -Math.abs(swing)*0.25;
     ctx.save();
-    ctx.translate(p.ox, p.oy + ay);
+    ctx.translate(p.ox, p.oy+ay);
     ctx.fillStyle = INK;
-    ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+    ctx.fillRect(-p.w/2, -p.h/2, p.w, p.h);
     if (p.head) drawEyes(facing);
     ctx.restore();
   });
@@ -781,215 +578,176 @@ function drawPlayerSprite(cx, cy, walk, scaleX, scaleY, facing) {
 }
 
 function drawMenu() {
-  ctx.fillStyle = PAPER;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  // Okrajový rám
-  ctx.strokeStyle = INK;
-  ctx.lineWidth = 4;
-  ctx.strokeRect(16, 16, canvas.width - 32, canvas.height - 32);
-
-  // Nadpis
-  ctx.fillStyle = INK;
-  ctx.textAlign = 'center';
+  ctx.fillStyle = PAPER; ctx.fillRect(0,0,880,460);
+  ctx.strokeStyle = INK; ctx.lineWidth = 4; ctx.strokeRect(16,16,848,428);
+  ctx.fillStyle = INK; ctx.textAlign='center';
   ctx.font = 'bold 46px ui-monospace, monospace';
-  ctx.fillText('BOUNCE BACK', canvas.width / 2, 112);
-
-  // Animovaný panáček z kostek uprostřed pod nadpisem
-  const bounce = Math.abs(Math.sin(animFrame * 0.05)) * 8;
-  drawPlayerSprite(canvas.width / 2, 165 - bounce, animFrame * 0.08, 1, 1, 1);
-
-  // Tlačítka menu
+  ctx.fillText('BOUNCE BACK', 440, 112);
+  const bounce = Math.abs(Math.sin(animFrame*0.05))*8;
+  drawPlayerSprite(440, 165-bounce, animFrame*0.08, 1, 1, 1);
   menuButtonsRects = [];
-  const btnW = 240;
-  const btnH = 44;
-  const startY = 235;
-  const gap = 58;
-
+  const bw=240, bh=44, sy=235, gap=58;
   MENU_ITEMS.forEach((label, i) => {
-    const bx = canvas.width / 2 - btnW / 2;
-    const by = startY + i * gap;
-    menuButtonsRects.push({ x: bx, y: by, w: btnW, h: btnH });
-
-    const active = (i === menuIndex);
+    const bx=440-bw/2, by=sy+i*gap;
+    menuButtonsRects.push({x:bx,y:by,w:bw,h:bh});
+    const active = i===menuIndex;
     ctx.fillStyle = active ? INK : PAPER;
-    ctx.fillRect(bx, by, btnW, btnH);
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 2.5;
-    ctx.strokeRect(bx, by, btnW, btnH);
-
+    ctx.fillRect(bx,by,bw,bh);
+    ctx.strokeStyle = INK; ctx.lineWidth = 2.5; ctx.strokeRect(bx,by,bw,bh);
     ctx.fillStyle = active ? PAPER : INK;
     ctx.font = 'bold 18px ui-monospace, monospace';
-    ctx.fillText(label, canvas.width / 2, by + 28);
+    ctx.fillText(label, 440, by+28);
+  });
+  ctx.textAlign='left';
+}
+
+function drawLevelsScreen() {
+  ctx.fillStyle = PAPER; ctx.fillRect(0,0,880,460);
+  ctx.strokeStyle = INK; ctx.lineWidth = 4; ctx.strokeRect(16,16,848,428);
+  ctx.fillStyle = INK; ctx.textAlign='center';
+  ctx.font = 'bold 34px ui-monospace, monospace';
+  ctx.fillText('SELECT LEVEL', 440, 85);
+
+  levelButtonsRects = [];
+  const bw = 140, bh = 85, gap = 20;
+  const startX = 50, startY = 150;
+  LEVELS.forEach((level, i) => {
+    const col = i % 5, row = Math.floor(i / 5);
+    const bx = startX + col * (bw + gap);
+    const by = startY + row * (bh + gap);
+    levelButtonsRects.push({x:bx, y:by, w:bw, h:bh, idx:i});
+    const isDone = done.has(i);
+    const isHover = levelHoverIdx === i;
+    ctx.fillStyle = isHover ? INK : PAPER;
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeStyle = INK; ctx.lineWidth = 2.5;
+    ctx.strokeRect(bx, by, bw, bh);
+    ctx.fillStyle = isHover ? PAPER : INK;
+    ctx.font = 'bold 24px ui-monospace, monospace';
+    ctx.fillText(String(i+1).padStart(2,'0'), bx + bw/2, by + 40);
+    const name = level.name.split(' // ')[1] || '';
+    ctx.font = 'bold 10px ui-monospace, monospace';
+    ctx.fillText(name, bx + bw/2, by + 62);
+    if (isDone) {
+      ctx.font = 'bold 11px ui-monospace, monospace';
+      ctx.fillText('CLEARED', bx + bw/2, by + 78);
+    }
   });
 
-  ctx.textAlign = 'left';
+  const bbx = 340, bby = 380, bbw = 200, bbh = 38;
+  backButtonRect = {x:bbx, y:bby, w:bbw, h:bbh};
+  ctx.fillStyle = INK;
+  ctx.fillRect(bbx, bby, bbw, bbh);
+  ctx.fillStyle = PAPER;
+  ctx.font = 'bold 15px ui-monospace, monospace';
+  ctx.fillText('BACK', 440, bby + 24);
+  ctx.textAlign='left';
 }
 
 function drawControlsScreen() {
-  ctx.fillStyle = PAPER;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.strokeStyle = INK;
-  ctx.lineWidth = 4;
-  ctx.strokeRect(16, 16, canvas.width - 32, canvas.height - 32);
-
-  ctx.fillStyle = INK;
-  ctx.textAlign = 'center';
+  ctx.fillStyle = PAPER; ctx.fillRect(0,0,880,460);
+  ctx.strokeStyle = INK; ctx.lineWidth = 4; ctx.strokeRect(16,16,848,428);
+  ctx.fillStyle = INK; ctx.textAlign='center';
   ctx.font = 'bold 34px ui-monospace, monospace';
-  ctx.fillText('CONTROLS', canvas.width / 2, 85);
-
+  ctx.fillText('CONTROLS', 440, 85);
   const rows = [
-    ['[A] / [D]  nebo  [ŠIPKY]', 'Pohyb vlevo a vpravo'],
-    ['[W] / [SPACE] / [NAHORU]', 'Skok'],
-    ['[E]', 'Rozpad na kostky / Složení zpět (Bounce Back)'],
-    ['[Q]  nebo  [KLIK MYŠÍ]', 'Výběr kotevní kostky v rozpadu'],
-    ['[R]', 'Restart aktuálního levelu'],
-    ['[ESC]', 'Návrat do hlavního menu']
+    ['[A] / [D]', 'Move left / right'],
+    ['[W] / [SPACE]', 'Jump'],
+    ['[E]', 'Break into pieces / Reassemble'],
+    ['[Q] / Click', 'Select anchor piece'],
+    ['[R]', 'Restart level'],
+    ['[ESC]', 'Back to menu']
   ];
-
-  ctx.font = 'bold 16px ui-monospace, monospace';
   rows.forEach((r, idx) => {
-    const y = 145 + idx * 42;
-    ctx.textAlign = 'right';
-    ctx.fillText(r[0], canvas.width / 2 - 20, y);
-    ctx.textAlign = 'left';
-    ctx.font = '16px ui-monospace, monospace';
-    ctx.fillText('—  ' + r[1], canvas.width / 2 - 5, y);
-    ctx.font = 'bold 16px ui-monospace, monospace';
+    const y = 145 + idx*42;
+    ctx.textAlign='right'; ctx.font='bold 16px ui-monospace, monospace';
+    ctx.fillText(r[0], 420, y);
+    ctx.textAlign='left'; ctx.font='16px ui-monospace, monospace';
+    ctx.fillText('—  '+r[1], 435, y);
   });
-
-  // Tlačítko zpět
-  const bx = canvas.width / 2 - 100;
-  const by = 395;
-  ctx.fillStyle = INK;
-  ctx.fillRect(bx, by, 200, 38);
-  ctx.fillStyle = PAPER;
-  ctx.textAlign = 'center';
-  ctx.font = 'bold 15px ui-monospace, monospace';
-  ctx.fillText('ZPĚT DO MENU', canvas.width / 2, by + 24);
-  ctx.textAlign = 'left';
-}
-
-function drawTutorialHints() {
-  ctx.fillStyle = INK;
-  ctx.textAlign = 'center';
-  ctx.font = 'bold 13px ui-monospace, monospace';
-
-  // Popisek 1: Tlačítko
-  ctx.fillText('1. ROZPADNI SE [E] NAD TLAČÍTKEM', 295, 290);
-  ctx.fillText('KOSTKA HO PODRŽÍ STISKNUTÉ', 295, 308);
-
-  // Popisek 2: Průlez + kotva
-  ctx.fillText('2. PROKLUZNI POD ZDÍ', 536, 260);
-  ctx.fillText('VYBER KOTVU [Q / KLIK] A SLOŽ SE [E]', 536, 278);
-
-  // Popisek 3: Cíl
-  ctx.fillText('3. DOJDI DO CÍLE', 790, 295);
-
-  ctx.textAlign = 'left';
+  ctx.fillStyle = INK; ctx.fillRect(340,395,200,38);
+  ctx.fillStyle = PAPER; ctx.textAlign='center';
+  ctx.font='bold 15px ui-monospace, monospace';
+  ctx.fillText('BACK TO MENU', 440, 419);
+  ctx.textAlign='left';
 }
 
 function drawGame() {
-  ctx.fillStyle = PAPER;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = PAPER; ctx.fillRect(0,0,880,460);
 
-  if (lvl.isTutorial) drawTutorialHints();
-
-  // Cíl
   const g = lvl.goal;
-  ctx.strokeStyle = INK;
-  ctx.lineWidth = 2;
-  ctx.setLineDash([5, 5]);
-  ctx.strokeRect(g.x, g.y, g.w, g.h);
+  ctx.strokeStyle = INK; ctx.lineWidth = 2;
+  ctx.setLineDash([5,5]); ctx.strokeRect(g.x, g.y, g.w, g.h);
   ctx.setLineDash([]);
-  ctx.fillStyle = INK;
-  ctx.fillRect(g.x + g.w / 2 - 3, g.y + g.h / 2 - 3, 6, 6);
+  ctx.fillStyle = INK; ctx.fillRect(g.x+g.w/2-3, g.y+g.h/2-3, 6, 6);
 
-  // Zdi
   ctx.fillStyle = INK;
   lvl.walls.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
 
-  // Tlačítka
   lvl.buttons.forEach(b => {
-    const off = b.pressed ? 6 : 0;
-    ctx.fillRect(b.x, b.y + off, b.w, b.h - off);
+    if (b.pressed) {
+      ctx.fillStyle = '#555';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.fillStyle = INK;
+      ctx.fillRect(b.x+4, b.y+4, b.w-8, 4);
+    } else {
+      ctx.fillStyle = INK;
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+    }
   });
 
-  // Dveře
   lvl.doors.forEach(d => {
     ctx.fillStyle = PAPER;
     ctx.fillRect(d.x, d.currY, d.w, d.h);
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = INK; ctx.lineWidth = 2.5;
     ctx.strokeRect(d.x, d.currY, d.w, d.h);
     ctx.beginPath();
     ctx.moveTo(d.x, d.currY);
-    ctx.lineTo(d.x + d.w, d.currY + d.h);
+    ctx.lineTo(d.x+d.w, d.currY+d.h);
     ctx.stroke();
   });
 
-  // Nebezpečí
   ctx.fillStyle = INK;
   lvl.hazards.forEach(h => {
-    for (let x = h.x; x < h.x + h.w; x += 14) {
+    for (let x = h.x; x < h.x+h.w; x += 14) {
       ctx.beginPath();
-      ctx.moveTo(x, h.y + h.h);
-      ctx.lineTo(x + 7, h.y);
-      ctx.lineTo(x + 14, h.y + h.h);
+      ctx.moveTo(x, h.y+h.h);
+      ctx.lineTo(x+7, h.y);
+      ctx.lineTo(x+14, h.y+h.h);
       ctx.fill();
     }
   });
 
-  // Panáček
   if (player.state === 'ASSEMBLED') {
-    drawPlayerSprite(
-      player.x + player.w / 2,
-      player.y + player.h / 2,
-      player.walk,
-      player.scaleX,
-      player.scaleY,
-      player.facing
-    );
+    drawPlayerSprite(player.x+player.w/2, player.y+player.h/2, player.walk, player.scaleX, player.scaleY, player.facing);
   } else {
     const a = pieces[anchorIdx];
-    if (a) {
-      const ax = a.x + a.w / 2;
-      const ay = a.y + a.h / 2;
-      ctx.strokeStyle = 'rgba(23, 23, 23, 0.25)';
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([3, 4]);
-      pieces.forEach((p, i) => {
-        if (i === anchorIdx) return;
-        ctx.beginPath();
-        ctx.moveTo(ax, ay);
-        ctx.lineTo(p.x + p.w / 2, p.y + p.h / 2);
-        ctx.stroke();
+    if (a && !a.dead) {
+      const ax = a.x+a.w/2, ay = a.y+a.h/2;
+      ctx.strokeStyle = 'rgba(23,23,23,0.25)'; ctx.lineWidth = 1.5;
+      ctx.setLineDash([3,4]);
+      pieces.forEach((p,i) => {
+        if (i===anchorIdx || p.dead) return;
+        ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(p.x+p.w/2, p.y+p.h/2); ctx.stroke();
       });
       ctx.setLineDash([]);
     }
-
-    pieces.forEach((p, i) => {
+    pieces.forEach((p,i) => {
+      if (p.dead) return;
       ctx.save();
-      ctx.translate(p.x + p.w / 2, p.y + p.h / 2);
+      ctx.translate(p.x+p.w/2, p.y+p.h/2);
       ctx.rotate(p.rot);
-
       if (i === anchorIdx) {
         ctx.fillStyle = PAPER;
-        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
-        ctx.strokeStyle = INK;
-        ctx.lineWidth = 2.5;
-        ctx.strokeRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        ctx.fillRect(-p.w/2, -p.h/2, p.w, p.h);
+        ctx.strokeStyle = INK; ctx.lineWidth = 2.5;
+        ctx.strokeRect(-p.w/2, -p.h/2, p.w, p.h);
         ctx.fillStyle = INK;
-        if (p.head) {
-          ctx.fillRect(-4, -2, 2.5, 4);
-          ctx.fillRect(2, -2, 2.5, 4);
-        } else {
-          ctx.fillRect(-2.5, -2.5, 5, 5);
-        }
+        if (p.head) { ctx.fillRect(-4,-2,2.5,4); ctx.fillRect(2,-2,2.5,4); }
+        else ctx.fillRect(-2.5,-2.5,5,5);
       } else {
         ctx.fillStyle = INK;
-        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        ctx.fillRect(-p.w/2, -p.h/2, p.w, p.h);
         if (p.head) drawEyes(player.facing);
       }
       ctx.restore();
@@ -999,21 +757,17 @@ function drawGame() {
   ctx.fillStyle = INK;
   dust.forEach(d => {
     ctx.globalAlpha = d.life * 0.6;
-    ctx.fillRect(d.x - d.s / 2, d.y - d.s / 2, d.s, d.s);
+    ctx.fillRect(d.x-d.s/2, d.y-d.s/2, d.s, d.s);
   });
   ctx.globalAlpha = 1;
 }
 
 function loop() {
   animFrame++;
-  if (screen === 'MENU') {
-    drawMenu();
-  } else if (screen === 'CONTROLS') {
-    drawControlsScreen();
-  } else {
-    updateGame();
-    drawGame();
-  }
+  if (screen === 'MENU') drawMenu();
+  else if (screen === 'LEVELS') drawLevelsScreen();
+  else if (screen === 'CONTROLS') drawControlsScreen();
+  else { updateGame(); drawGame(); }
   requestAnimationFrame(loop);
 }
 
