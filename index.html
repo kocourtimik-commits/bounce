@@ -26,11 +26,20 @@ const INK = '#171717';
 const PAPER = '#f5f4f0';
 const W = 880, H = 460;
 
+// ============================================================
+//  TVÉ KLÍČE Z FOSSBOARD
+// ============================================================
+const FOSSBOARD_PUBLIC_KEY = 'pub-ec45a5da98b39d75c934';
+const FOSSBOARD_PRIVATE_KEY = 'priv-905fb7a117f8c8703336';
+const FOSSBOARD_API_URL = 'https://fossboard.justneki.deno.net';
+// ============================================================
+
 const STEP = 1000 / 39;
 const ENDLESS_MOVE_SPEED = 5.0;
 
 let gameSpeed = 1.0;
 const SPEEDS = [0.25, 0.5, 1.0, 1.5, 2.0, 3.0];
+const SPEEDRUN_SPEED = 1.5; // Pevná rychlost pro speedrun
 let speedBtnRect = null;
 
 let lostParts = new Set();
@@ -178,16 +187,69 @@ let speedrunAttempts = 0;
 let cheatAirJump = false;
 let bestEndlessDistance = 0;
 
+// ============= LEADERBOARD (SERVER-SIDE) =============
+let speedrunLeaderboard = []; 
+let isLeaderboardLoading = false;
+let lastSubmitStatus = '';
+
+async function fetchLeaderboardFromServer() {
+  if (isLeaderboardLoading) return;
+  isLeaderboardLoading = true;
+  try {
+    const url = `${FOSSBOARD_API_URL}/lb/${FOSSBOARD_PUBLIC_KEY}/json`;
+    const res = await fetch(url);
+    const data = await res.json();
+    const board = data?.dreamlo?.leaderboard;
+    if (!board) { speedrunLeaderboard = []; isLeaderboardLoading = false; return; }
+
+    let entries = board.entry;
+    if (!entries) { speedrunLeaderboard = []; isLeaderboardLoading = false; return; }
+    if (!Array.isArray(entries)) entries = [entries];
+
+    speedrunLeaderboard = entries.map(e => ({
+      name: e.name || 'Anonymous',
+      time: parseFloat(e.seconds) || 0,
+      date: e.date ? new Date(e.date).getTime() : Date.now()
+    })).filter(e => e.time > 0);
+
+    speedrunLeaderboard.sort((a, b) => a.time - b.time);
+  } catch (err) {
+    console.error('Leaderboard fetch error:', err);
+    speedrunLeaderboard = [];
+  }
+  isLeaderboardLoading = false;
+}
+
+async function submitScoreToServer(name, timeSeconds) {
+  lastSubmitStatus = 'submitting';
+  try {
+    const safeName = encodeURIComponent((name || 'Anonymous').slice(0, 12));
+    const url = `${FOSSBOARD_API_URL}/lb/${FOSSBOARD_PRIVATE_KEY}/add/${safeName}/0/${timeSeconds}/`;
+    const res = await fetch(url);
+    const text = await res.text();
+    if (text.trim() === 'OK') {
+      lastSubmitStatus = 'ok';
+      await fetchLeaderboardFromServer();
+    } else {
+      lastSubmitStatus = 'error';
+    }
+  } catch (err) {
+    lastSubmitStatus = 'error';
+  }
+}
+
+let playerNameInput = '';
+
 function saveProgress() {
   try {
-    localStorage.setItem('splitted_v22', JSON.stringify({
+    localStorage.setItem('splitted_v24', JSON.stringify({
       done: [...done], bestTimes, bestDeaths, totalDeaths, bestSpeedrun, speedrunAttempts, cheatAirJump, bestEndlessDistance
     }));
   } catch(e) {}
 }
 function loadProgress() {
   try {
-    const raw = localStorage.getItem('splitted_v22') || localStorage.getItem('bounceback_v22') || localStorage.getItem('bounceback_v21');
+    const raw = localStorage.getItem('splitted_v24') || localStorage.getItem('splitted_v23') || localStorage.getItem('splitted_v22');
     if (!raw) return;
     const d = JSON.parse(raw);
     if (d.done) done = new Set([...d.done].filter(i => i < LEVELS.length));
@@ -253,14 +315,14 @@ let player = {
 };
 
 let pieces = [];
-let anchorId = 0;
+let anchorIdx = 0;
 let dust = [];
 let keys = {};
 let animFrame = 0;
 
 function getMenuItems() {
-  const items = ['PLAY', 'LEVELS', 'ENDLESS (beta)', 'CONTROLS'];
-  if (done.size === LEVELS.length) items.push('SPEEDRUN', 'CHEATS');
+  const items = ['PLAY', 'LEVELS', 'ENDLESS (beta)', 'CONTROLS', 'SPEEDRUN'];
+  if (done.size === LEVELS.length) items.push('CHEATS');
   return items;
 }
 function nextUndone() {
@@ -268,14 +330,24 @@ function nextUndone() {
   return 0;
 }
 
-function openMenu() { screen = 'MENU'; menuIndex = 0; cheatsHelpTimer = 0; lostParts.clear(); }
+function openMenu() { 
+  screen = 'MENU'; 
+  menuIndex = 0; 
+  cheatsHelpTimer = 0; 
+  lostParts.clear();
+  if (!speedrunMode) gameSpeed = 1.0; // Reset rychlosti
+}
 function openLevels() { screen = 'LEVELS'; levelHoverIdx = nextUndone(); }
 function openControls() { screen = 'CONTROLS'; }
-function openSpeedrunMenu() { screen = 'SPEEDRUN_MENU'; }
+function openSpeedrunMenu() { 
+  screen = 'SPEEDRUN_MENU'; 
+  fetchLeaderboardFromServer();
+}
 function openCheats() { screen = 'CHEATS'; cheatsIndex = 0; cheatsHelpTimer = 0; }
 
 function startSpeedrun() {
   speedrunMode = true;
+  gameSpeed = SPEEDRUN_SPEED; // Vynutí 1.5x rychlost
   speedrunElapsed = 0;
   speedrunAttempts++;
   saveProgress();
@@ -295,7 +367,7 @@ function startEndless() {
     vx: 0, vy: 0, grounded: false, coyote: 0,
     state: 'ASSEMBLED', scaleX: 1, scaleY: 1, walk: 0, facing: 1
   });
-  pieces = []; dust = []; anchorId = 0;
+  pieces = []; dust = []; anchorIdx = 0;
   shakeAmount = 0;
   acc = 0;
 }
@@ -306,7 +378,9 @@ function loadLevel(i) {
       speedrunTotalTime = speedrunElapsed;
       if (!bestSpeedrun || speedrunTotalTime < bestSpeedrun) bestSpeedrun = speedrunTotalTime;
       speedrunMode = false;
+      gameSpeed = 1.0; // Reset po speedrunu
       screen = 'SPEEDRUN_DONE';
+      playerNameInput = localStorage.getItem('splitted_lastname') || '';
       saveProgress();
       return;
     }
@@ -332,7 +406,7 @@ function resetPlayerToSpawn() {
     x: lvl.spawn.x, y: lvl.spawn.y, px: lvl.spawn.x, py: lvl.spawn.y,
     vx: 0, vy: 0, grounded: false, coyote: 0, state: 'ASSEMBLED', scaleX: 1, scaleY: 1
   });
-  pieces = []; dust = []; anchorId = 0;
+  pieces = []; dust = []; anchorIdx = 0;
 }
 function die() {
   const px = player.x + player.w/2;
@@ -394,7 +468,7 @@ function pickDefaultAnchor() {
   if (!pieces.length) return;
   let best = pieces[0];
   pieces.forEach(p => { if (player.facing >= 0 ? p.x > best.x : p.x < best.x) best = p; });
-  anchorId = best.id;
+  anchorIdx = pieces.indexOf(best);
 }
 
 function shatter() {
@@ -457,7 +531,7 @@ function findFreeEndless(tx, ty) {
 
 function reassemble() {
   if (player.state !== 'SHATTERED' || !pieces.length) return;
-  const a = pieces.find(p => p.id === anchorId) || pieces[0];
+  const a = pieces[anchorIdx] || pieces[0];
   const acx = a.x + a.w/2, acy = a.y + a.h/2;
   const [tx, ty] = (screen === 'ENDLESS')
     ? findFreeEndless(acx - a.ox - player.w/2, acy - a.oy - player.h/2 - 2)
@@ -569,7 +643,10 @@ window.addEventListener('keydown', e => {
   if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
   if (e.code === 'Escape') {
     if (screen !== 'MENU') {
-      if (speedrunMode) speedrunMode = false;
+      if (speedrunMode) {
+        speedrunMode = false;
+        gameSpeed = 1.0;
+      }
       openMenu();
     }
     return;
@@ -586,6 +663,32 @@ window.addEventListener('keydown', e => {
   if (screen === 'SPEEDRUN_MENU') {
     if (!keys[e.code] && (e.code==='Enter'||e.code==='Space')) startSpeedrun();
     keys[e.code]=true; return;
+  }
+  if (screen === 'SPEEDRUN_DONE') {
+    if (e.code === 'Enter') {
+      if (!keys['Enter']) {
+        submitScoreToServer(playerNameInput, speedrunTotalTime);
+        playerNameInput = playerNameInput || 'Anonymous';
+        localStorage.setItem('splitted_lastname', playerNameInput);
+        screen = 'SPEEDRUN_MENU'; // Zpět do menu (kde je leaderboard)
+        lastSubmitStatus = 'submitting';
+        gameSpeed = 1.0;
+      }
+    } else if (e.code === 'Backspace') {
+      if (!keys['Backspace']) {
+        playerNameInput = playerNameInput.slice(0, -1);
+        beep(280, 220, 0.03);
+      }
+    } else if (e.key && e.key.length === 1 && playerNameInput.length < 12) {
+      if (!keys[e.code]) {
+        if (/^[a-zA-Z0-9 _\-.]$/.test(e.key)) {
+          playerNameInput += e.key;
+          beep(420, 500, 0.03);
+        }
+      }
+    }
+    keys[e.code] = true;
+    return;
   }
   if (screen === 'ENDLESS_DONE') {
     if (!keys[e.code] && (e.code==='Enter'||e.code==='Space')) startEndless();
@@ -618,18 +721,13 @@ window.addEventListener('keydown', e => {
     if (!keys[e.code] && (e.code==='Enter'||e.code==='Space')) openMenu();
     keys[e.code]=true; return;
   }
-  if (screen === 'SPEEDRUN_DONE') {
-    if (!keys[e.code] && (e.code==='Enter'||e.code==='Space')) openSpeedrunMenu();
-    keys[e.code]=true; return;
-  }
   if (!keys[e.code]) {
     if (e.code === 'KeyE') {
       if (player.state === 'ASSEMBLED') shatter();
       else if (player.state === 'SHATTERED') reassemble();
     }
     if (e.code === 'KeyQ' && player.state === 'SHATTERED' && pieces.length) {
-      const i = pieces.findIndex(p => p.id === anchorId);
-      anchorId = pieces[(i + 1) % pieces.length].id;
+      anchorIdx = (anchorIdx + 1) % pieces.length;
       beep(440, 520, 0.06, 0.04);
     }
     if (player.state === 'SHATTERED' && pieces.length) {
@@ -639,7 +737,7 @@ window.addEventListener('keydown', e => {
       else if (e.code === 'KeyA' || e.code === 'ArrowLeft') pick = by(p => -p.x);
       else if (e.code === 'KeyS' || e.code === 'ArrowDown') pick = by(p => p.y);
       else if (e.code === 'KeyW' || e.code === 'ArrowUp' || e.code === 'Space') pick = by(p => -p.y);
-      if (pick) { anchorId = pick.id; beep(480, 580, 0.06, 0.04); }
+      if (pick) { anchorIdx = pieces.indexOf(pick); beep(480, 580, 0.06, 0.04); }
     }
     if (e.code === 'KeyR' && screen === 'GAME') restartLevel();
   }
@@ -683,8 +781,11 @@ canvas.addEventListener('mousedown', e => {
     return;
   }
   if (screen === 'CONTROLS') { openMenu(); return; }
-  if (screen === 'SPEEDRUN_MENU') { startSpeedrun(); return; }
-  if (screen === 'SPEEDRUN_DONE') { openSpeedrunMenu(); return; }
+  if (screen === 'SPEEDRUN_MENU') {
+    startSpeedrun();
+    return;
+  }
+  if (screen === 'SPEEDRUN_DONE') { return; }
   if (screen === 'ENDLESS_DONE') { startEndless(); return; }
   if (screen === 'CHEATS') {
     if (airJumpBtnRect && mx>=airJumpBtnRect.x && mx<=airJumpBtnRect.x+airJumpBtnRect.w && my>=airJumpBtnRect.y && my<=airJumpBtnRect.y+airJumpBtnRect.h) {
@@ -700,6 +801,7 @@ canvas.addEventListener('mousedown', e => {
   }
   if (screen === 'GAME' || screen === 'ENDLESS') {
     if (speedBtnRect && mx >= speedBtnRect.x && mx <= speedBtnRect.x + speedBtnRect.w && my >= speedBtnRect.y && my <= speedBtnRect.y + speedBtnRect.h) {
+      if (speedrunMode) return; // Zablokováno ve speedrunu
       let idx = SPEEDS.indexOf(gameSpeed);
       if (idx === -1) idx = 2;
       idx = (idx + 1) % SPEEDS.length;
@@ -710,11 +812,11 @@ canvas.addEventListener('mousedown', e => {
   }
   if (player.state !== 'SHATTERED') return;
   let best = -1, minD = 70;
-  pieces.forEach(p => {
+  pieces.forEach((p, i) => {
     const d = Math.hypot(p.x + p.w/2 - mx, p.y + p.h/2 - my);
-    if (d < minD) { minD = d; best = p.id; }
+    if (d < minD) { minD = d; best = i; }
   });
-  if (best !== -1) { anchorId = best; beep(480,580,0.06,0.04); }
+  if (best !== -1) { anchorIdx = best; beep(480,580,0.06,0.04); }
 });
 
 function updateGame() {
@@ -925,7 +1027,7 @@ function updateGame() {
     pieces.forEach(p => { if (p.dead && p.deathCause === 'hazard') lostParts.add(p.id); });
     pieces = pieces.filter(p => !p.dead);
     if (pieces.length === 0) { die(); return; }
-    if (!pieces.some(p => p.id === anchorId)) pickDefaultAnchor();
+    if (anchorIdx >= pieces.length) pickDefaultAnchor();
   }
   else if (player.state === 'REASSEMBLING') {
     player.timer += 0.09;
@@ -1089,7 +1191,7 @@ function updateEndless() {
     pieces.forEach(p => { if (p.dead && p.deathCause === 'hazard') lostParts.add(p.id); });
     pieces = pieces.filter(p => !p.dead);
     if (pieces.length === 0) { endlessDie(); return; }
-    if (!pieces.some(p => p.id === anchorId)) pickDefaultAnchor();
+    if (anchorIdx >= pieces.length) pickDefaultAnchor();
 
     const maxPX = Math.max(...pieces.map(p => p.x + p.w));
     const d = Math.floor(maxPX / 10);
@@ -1247,7 +1349,7 @@ function drawMenu() {
   if (done.size === LEVELS.length) {
     ctx.font = 'bold 13px ui-monospace, monospace';
     ctx.fillStyle = '#0a0';
-    ctx.fillText('ALL LEVELS CLEARED · SPEEDRUN + CHEATS UNLOCKED', W/2, 112);
+    ctx.fillText('ALL LEVELS CLEARED · CHEATS UNLOCKED', W/2, 112);
     ctx.fillStyle = INK;
   }
 
@@ -1471,33 +1573,70 @@ function drawSpeedrunMenu() {
   ctx.fillStyle = PAPER; ctx.fillRect(0,0,W,H);
   ctx.strokeStyle = INK; ctx.lineWidth = 4; ctx.strokeRect(16,16,W-32,H-32);
   ctx.fillStyle = INK; ctx.textAlign='center';
-  ctx.font = 'bold 48px ui-monospace, monospace';
-  ctx.fillText('SPEEDRUN', W/2, 100);
-  ctx.font = 'bold 13px ui-monospace, monospace';
-  ctx.fillStyle = '#666';
-  ctx.fillText(`All ${LEVELS.length} levels. One timer.`, W/2, 128);
+  
+  ctx.font = 'bold 32px ui-monospace, monospace';
+  ctx.fillText('SPEEDRUN', W/2, 40);
 
-  const bounce = Math.abs(Math.sin(animFrame*0.06))*6;
-  drawPlayerSprite(W/2, 180-bounce, animFrame*0.09, 0.9, 0.9, 1, true);
-
-  ctx.fillStyle = '#888';
-  ctx.font = 'bold 12px ui-monospace, monospace';
-  ctx.fillText('BEST TIME', W/2, 235);
-  ctx.fillStyle = INK;
-  ctx.font = 'bold 42px ui-monospace, monospace';
-  if (bestSpeedrun) ctx.fillText(formatTime(bestSpeedrun), W/2, 285);
-  else ctx.fillText('— : —', W/2, 285);
-
+  // === TOP 10 LEADERBOARD ===
   ctx.font = 'bold 12px ui-monospace, monospace';
   ctx.fillStyle = '#888';
-  ctx.fillText(`Attempts: ${speedrunAttempts}`, W/2, 315);
-
+  ctx.fillText('TOP 10 WORLDWIDE', W/2, 70);
   ctx.fillStyle = INK;
+
+  if (isLeaderboardLoading) {
+    ctx.font = 'bold 14px ui-monospace, monospace';
+    ctx.fillStyle = '#888';
+    ctx.fillText('Loading...', W/2, 170);
+    ctx.fillStyle = INK;
+  } else if (speedrunLeaderboard.length === 0) {
+    ctx.font = 'bold 14px ui-monospace, monospace';
+    ctx.fillStyle = '#888';
+    ctx.fillText('No runs yet. Be the first!', W/2, 170);
+    ctx.fillStyle = INK;
+  } else {
+    const top10 = speedrunLeaderboard.slice(0, 10);
+    top10.forEach((entry, i) => {
+      const y = 95 + i * 22;
+      const isTop = i === 0;
+
+      ctx.textAlign = 'left';
+      ctx.fillStyle = isTop ? '#0a0' : INK;
+      ctx.font = 'bold 14px ui-monospace, monospace';
+      ctx.fillText(String(i + 1).padStart(2, '0') + '.', 100, y);
+
+      ctx.fillStyle = INK;
+      ctx.font = 'bold 14px ui-monospace, monospace';
+      ctx.fillText(entry.name, 140, y);
+
+      ctx.fillStyle = isTop ? '#0a0' : INK;
+      ctx.font = 'bold 14px ui-monospace, monospace';
+      ctx.fillText(formatTime(entry.time), 600, y);
+    });
+  }
+
+  // === PLAY BUTTON ===
+  const btnW = 260, btnH = 38, btnX = W/2 - btnW/2, btnY = 340;
+  ctx.fillStyle = INK;
+  ctx.fillRect(btnX, btnY, btnW, btnH);
+  ctx.fillStyle = PAPER;
   ctx.font = 'bold 16px ui-monospace, monospace';
-  ctx.fillText('[ENTER] Start speedrun', W/2, 365);
+  ctx.textAlign='center';
+  ctx.fillText('▶ START SPEEDRUN', W/2, btnY + 25);
+
+  // === INFO ===
   ctx.font = 'bold 11px ui-monospace, monospace';
+  ctx.fillStyle = '#a00';
+  ctx.fillText('Locks speed to 1.5x', W/2, 388);
+  
   ctx.fillStyle = '#888';
-  ctx.fillText('[ESC] Back to menu', W/2, 388);
+  if (bestSpeedrun) {
+    ctx.fillText(`Your best: ${formatTime(bestSpeedrun)}`, W/2, 405);
+  } else {
+    ctx.fillText('No personal best yet', W/2, 405);
+  }
+  
+  ctx.fillText('[ESC] Back to menu · [ENTER] Play', W/2, H - 15);
+
   ctx.textAlign='left';
 }
 
@@ -1505,27 +1644,62 @@ function drawSpeedrunDone() {
   ctx.fillStyle = PAPER; ctx.fillRect(0,0,W,H);
   ctx.strokeStyle = INK; ctx.lineWidth = 4; ctx.strokeRect(16,16,W-32,H-32);
   ctx.fillStyle = INK; ctx.textAlign='center';
+
   ctx.font = 'bold 40px ui-monospace, monospace';
-  ctx.fillText('SPEEDRUN COMPLETE', W/2, 130);
+  ctx.fillText('SPEEDRUN COMPLETE', W/2, 90);
+
   ctx.font = 'bold 56px ui-monospace, monospace';
-  ctx.fillText(formatTime(speedrunTotalTime), W/2, 220);
+  ctx.fillText(formatTime(speedrunTotalTime), W/2, 160);
+
   if (bestSpeedrun === speedrunTotalTime) {
-    ctx.font = 'bold 22px ui-monospace, monospace';
+    ctx.font = 'bold 20px ui-monospace, monospace';
     ctx.fillStyle = '#0a0';
-    ctx.fillText('★ NEW RECORD ★', W/2, 265);
+    ctx.fillText('★ NEW RECORD ★', W/2, 195);
     ctx.fillStyle = INK;
   } else if (bestSpeedrun) {
-    ctx.font = 'bold 14px ui-monospace, monospace';
+    ctx.font = 'bold 13px ui-monospace, monospace';
     ctx.fillStyle = '#666';
-    ctx.fillText(`Best: ${formatTime(bestSpeedrun)}`, W/2, 265);
+    ctx.fillText(`Best: ${formatTime(bestSpeedrun)}`, W/2, 195);
     ctx.fillStyle = INK;
   }
+
   ctx.font = 'bold 13px ui-monospace, monospace';
   ctx.fillStyle = '#888';
-  ctx.fillText(`Attempt #${speedrunAttempts}`, W/2, 305);
+  ctx.fillText('ENTER YOUR NAME:', W/2, 235);
+  ctx.fillStyle = INK;
+
+  const inputW = 320, inputH = 48;
+  const inputX = W/2 - inputW/2;
+  const inputY = 252;
+  ctx.fillStyle = PAPER;
+  ctx.fillRect(inputX, inputY, inputW, inputH);
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 2.5;
+  ctx.strokeRect(inputX, inputY, inputW, inputH);
+
+  ctx.fillStyle = INK;
+  ctx.font = 'bold 24px ui-monospace, monospace';
+  ctx.textAlign = 'left';
+  const displayName = playerNameInput;
+  ctx.fillText(displayName, inputX + 16, inputY + 33);
+
+  if (Math.floor(animFrame / 25) % 2 === 0) {
+    const cursorX = inputX + 16 + ctx.measureText(displayName).width + 2;
+    ctx.fillRect(cursorX, inputY + 12, 2, 26);
+  }
+
+  ctx.textAlign = 'center';
   ctx.font = 'bold 12px ui-monospace, monospace';
-  ctx.fillStyle = '#666';
-  ctx.fillText('[ENTER] or click to return', W/2, H-50);
+  ctx.fillStyle = '#888';
+  ctx.fillText(`Max 12 characters · ${playerNameInput.length}/12`, W/2, 328);
+
+  ctx.fillStyle = INK;
+  ctx.font = 'bold 15px ui-monospace, monospace';
+  ctx.fillText('[ENTER] Save to worldwide leaderboard', W/2, 370);
+  ctx.font = 'bold 11px ui-monospace, monospace';
+  ctx.fillStyle = '#888';
+  ctx.fillText('[ESC] Skip · back to menu', W/2, 392);
+  ctx.fillText('(your time will be uploaded to the server)', W/2, H - 20);
   ctx.textAlign='left';
 }
 
@@ -1688,22 +1862,22 @@ function drawGame(alpha) {
   if (player.state === 'ASSEMBLED') {
     drawPlayerSprite(ix(player)+player.w/2, iy(player)+player.h/2, player.walk, player.scaleX, player.scaleY, player.facing);
   } else {
-    const a = pieces.find(p => p.id === anchorId);
+    const a = pieces[anchorIdx];
     if (a) {
       const ax = ix(a)+a.w/2, ay = iy(a)+a.h/2;
       ctx.strokeStyle = 'rgba(23,23,23,0.25)'; ctx.lineWidth = 1.5;
       ctx.setLineDash([3,4]);
-      pieces.forEach(p => {
-        if (p.id === anchorId) return;
+      pieces.forEach((p,i) => {
+        if (i===anchorIdx) return;
         ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(ix(p)+p.w/2, iy(p)+p.h/2); ctx.stroke();
       });
       ctx.setLineDash([]);
     }
-    pieces.forEach(p => {
+    pieces.forEach((p,i) => {
       ctx.save();
       ctx.translate(ix(p)+p.w/2, iy(p)+p.h/2);
       ctx.rotate(p.rot);
-      if (p.id === anchorId) {
+      if (i === anchorIdx) {
         ctx.fillStyle = PAPER;
         ctx.fillRect(-p.w/2, -p.h/2, p.w, p.h);
         ctx.strokeStyle = INK; ctx.lineWidth = 2.5;
@@ -1736,17 +1910,24 @@ function drawGame(alpha) {
   ctx.font = 'bold 14px ui-monospace, monospace';
   ctx.fillText('LEVEL ' + lvl.name, 24, 36);
 
-  speedBtnRect = { x: 100, y: 22, w: 70, h: 18 };
-  ctx.fillStyle = gameSpeed === 1.0 ? 'rgba(23,23,23,0.1)' : 'rgba(23,23,23,0.3)';
-  ctx.fillRect(speedBtnRect.x, speedBtnRect.y, speedBtnRect.w, speedBtnRect.h);
-  ctx.strokeStyle = INK;
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(speedBtnRect.x, speedBtnRect.y, speedBtnRect.w, speedBtnRect.h);
-  ctx.fillStyle = INK;
-  ctx.font = 'bold 11px ui-monospace, monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText(`${gameSpeed.toFixed(2).replace(/\.?0+$/, '')}x`, speedBtnRect.x + speedBtnRect.w/2, speedBtnRect.y + 13);
-  ctx.textAlign = 'left';
+  if (!speedrunMode) {
+    speedBtnRect = { x: 100, y: 22, w: 70, h: 18 };
+    ctx.fillStyle = gameSpeed === 1.0 ? 'rgba(23,23,23,0.1)' : 'rgba(23,23,23,0.3)';
+    ctx.fillRect(speedBtnRect.x, speedBtnRect.y, speedBtnRect.w, speedBtnRect.h);
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(speedBtnRect.x, speedBtnRect.y, speedBtnRect.w, speedBtnRect.h);
+    ctx.fillStyle = INK;
+    ctx.font = 'bold 11px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${gameSpeed.toFixed(2).replace(/\.?0+$/, '')}x`, speedBtnRect.x + speedBtnRect.w/2, speedBtnRect.y + 13);
+    ctx.textAlign = 'left';
+  } else {
+    // Ve speedrunu ukážeme jen fixní rychlost
+    ctx.font = 'bold 11px ui-monospace, monospace';
+    ctx.fillStyle = '#a00';
+    ctx.fillText('LOCKED: 1.5x', 100, 36);
+  }
 
   ctx.font = '11px ui-monospace, monospace';
   ctx.fillStyle = '#888';
@@ -1879,22 +2060,22 @@ function drawEndless(alpha) {
   if (player.state === 'ASSEMBLED') {
     drawPlayerSprite(ix(player)+player.w/2, iy(player)+player.h/2, player.walk, player.scaleX, player.scaleY, player.facing);
   } else {
-    const a = pieces.find(p => p.id === anchorId);
+    const a = pieces[anchorIdx];
     if (a) {
       const ax = ix(a)+a.w/2, ay = iy(a)+a.h/2;
       ctx.strokeStyle = 'rgba(23,23,23,0.25)'; ctx.lineWidth = 1.5;
       ctx.setLineDash([3,4]);
-      pieces.forEach(p => {
-        if (p.id === anchorId) return;
+      pieces.forEach((p,i) => {
+        if (i===anchorIdx) return;
         ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(ix(p)+p.w/2, iy(p)+p.h/2); ctx.stroke();
       });
       ctx.setLineDash([]);
     }
-    pieces.forEach(p => {
+    pieces.forEach((p,i) => {
       ctx.save();
       ctx.translate(ix(p)+p.w/2, iy(p)+p.h/2);
       ctx.rotate(p.rot);
-      if (p.id === anchorId) {
+      if (i === anchorIdx) {
         ctx.fillStyle = PAPER;
         ctx.fillRect(-p.w/2, -p.h/2, p.w, p.h);
         ctx.strokeStyle = INK; ctx.lineWidth = 2.5;
@@ -1926,17 +2107,19 @@ function drawEndless(alpha) {
   ctx.font = 'bold 16px ui-monospace, monospace';
   ctx.fillText('ENDLESS (beta)', 24, 36);
 
-  speedBtnRect = { x: 175, y: 22, w: 70, h: 18 };
-  ctx.fillStyle = gameSpeed === 1.0 ? 'rgba(23,23,23,0.1)' : 'rgba(23,23,23,0.3)';
-  ctx.fillRect(speedBtnRect.x, speedBtnRect.y, speedBtnRect.w, speedBtnRect.h);
-  ctx.strokeStyle = INK;
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(speedBtnRect.x, speedBtnRect.y, speedBtnRect.w, speedBtnRect.h);
-  ctx.fillStyle = INK;
-  ctx.font = 'bold 11px ui-monospace, monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText(`${gameSpeed.toFixed(2).replace(/\.?0+$/, '')}x`, speedBtnRect.x + speedBtnRect.w/2, speedBtnRect.y + 13);
-  ctx.textAlign = 'left';
+  if (!speedrunMode) {
+    speedBtnRect = { x: 175, y: 22, w: 70, h: 18 };
+    ctx.fillStyle = gameSpeed === 1.0 ? 'rgba(23,23,23,0.1)' : 'rgba(23,23,23,0.3)';
+    ctx.fillRect(speedBtnRect.x, speedBtnRect.y, speedBtnRect.w, speedBtnRect.h);
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(speedBtnRect.x, speedBtnRect.y, speedBtnRect.w, speedBtnRect.h);
+    ctx.fillStyle = INK;
+    ctx.font = 'bold 11px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${gameSpeed.toFixed(2).replace(/\.?0+$/, '')}x`, speedBtnRect.x + speedBtnRect.w/2, speedBtnRect.y + 13);
+    ctx.textAlign = 'left';
+  }
 
   ctx.font = 'bold 22px ui-monospace, monospace';
   ctx.fillText(`${endless.distance}m`, 24, 62);
