@@ -2,7 +2,7 @@
 <html lang="cs">
 <head>
 <meta charset="UTF-8">
-<title>Bounce Back</title>
+<title>Splitted</title>
 <style>
   * { box-sizing: border-box; user-select: none; margin: 0; padding: 0; }
   body {
@@ -180,14 +180,14 @@ let bestEndlessDistance = 0;
 
 function saveProgress() {
   try {
-    localStorage.setItem('bounceback_v22', JSON.stringify({
+    localStorage.setItem('splitted_v22', JSON.stringify({
       done: [...done], bestTimes, bestDeaths, totalDeaths, bestSpeedrun, speedrunAttempts, cheatAirJump, bestEndlessDistance
     }));
   } catch(e) {}
 }
 function loadProgress() {
   try {
-    const raw = localStorage.getItem('bounceback_v22') || localStorage.getItem('bounceback_v21') || localStorage.getItem('bounceback_v20');
+    const raw = localStorage.getItem('splitted_v22') || localStorage.getItem('bounceback_v22') || localStorage.getItem('bounceback_v21');
     if (!raw) return;
     const d = JSON.parse(raw);
     if (d.done) done = new Set([...d.done].filter(i => i < LEVELS.length));
@@ -370,7 +370,6 @@ function addDust(x, y, n = 6) {
 }
 
 function pushOutOfSolids(p, sol) {
-  // Push a piece out of any overlapping solids via shortest overlap
   for (let iter = 0; iter < 4; iter++) {
     let moved = false;
     for (let s of sol) {
@@ -419,7 +418,6 @@ function shatter() {
       dead: false, deathCause: null
     });
   });
-  // Fix spawn overlaps so pieces don't get pushed sideways and fall through
   const spawnSol = (screen === 'ENDLESS') ? endlessSolids() : solids();
   pieces.forEach(p => pushOutOfSolids(p, spawnSol));
   pickDefaultAnchor();
@@ -924,8 +922,6 @@ function updateGame() {
       }
       p.rot += p.vrot;
     });
-    // Only pieces killed by actual hazards are permanently lost.
-    // Out-of-bounds from spawn quirks does NOT lose them permanently.
     pieces.forEach(p => { if (p.dead && p.deathCause === 'hazard') lostParts.add(p.id); });
     pieces = pieces.filter(p => !p.dead);
     if (pieces.length === 0) { die(); return; }
@@ -1246,7 +1242,7 @@ function drawMenu() {
   ctx.strokeStyle = INK; ctx.lineWidth = 4; ctx.strokeRect(16,16,W-32,H-32);
   ctx.fillStyle = INK; ctx.textAlign='center';
   ctx.font = 'bold 46px ui-monospace, monospace';
-  ctx.fillText('BOUNCE BACK', W/2, 90);
+  ctx.fillText('SPLITTED', W/2, 90);
 
   if (done.size === LEVELS.length) {
     ctx.font = 'bold 13px ui-monospace, monospace';
@@ -1740,7 +1736,6 @@ function drawGame(alpha) {
   ctx.font = 'bold 14px ui-monospace, monospace';
   ctx.fillText('LEVEL ' + lvl.name, 24, 36);
 
-  // Speed UI
   speedBtnRect = { x: 100, y: 22, w: 70, h: 18 };
   ctx.fillStyle = gameSpeed === 1.0 ? 'rgba(23,23,23,0.1)' : 'rgba(23,23,23,0.3)';
   ctx.fillRect(speedBtnRect.x, speedBtnRect.y, speedBtnRect.w, speedBtnRect.h);
@@ -1757,7 +1752,6 @@ function drawGame(alpha) {
   ctx.fillStyle = '#888';
   ctx.fillText(`Deaths: ${lvlDeaths}`, 24, 52);
 
-  // Amputee indicator
   if (lostParts.size > 0) {
     const missing = [];
     if (lostParts.has(3)) missing.push('L-ARM');
@@ -1932,7 +1926,6 @@ function drawEndless(alpha) {
   ctx.font = 'bold 16px ui-monospace, monospace';
   ctx.fillText('ENDLESS (beta)', 24, 36);
 
-  // Speed UI
   speedBtnRect = { x: 175, y: 22, w: 70, h: 18 };
   ctx.fillStyle = gameSpeed === 1.0 ? 'rgba(23,23,23,0.1)' : 'rgba(23,23,23,0.3)';
   ctx.fillRect(speedBtnRect.x, speedBtnRect.y, speedBtnRect.w, speedBtnRect.h);
